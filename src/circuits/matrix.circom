@@ -46,14 +46,13 @@ template MatrixMul (m,n,p) {
     for (var i=0; i < m; i++) {
         for (var j=0; j < p; j++) {
             mem[i][j] = MatrixElementwiseMul(1, n);
-            mes[i][j] = MatrixSum(1, n);
             for (var k=0; k<n; k++) {
                 mem[i][j].a[0][k] <== a[i][k];
                 mem[i][j].b[0][k] <== b[k][j];
             }
-            for (var k=0; k<n; k++) {
-                mes[i][j].a[0][k] <== mem[i][j].out[0][k];
-            }
+
+            mes[i][j] = MatrixSum(1, n);
+            mes[i][j].a[0] <== mem[i][j].out[0];
             out[i][j] <== mes[i][j].out;
         }
     }
