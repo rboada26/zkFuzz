@@ -1,5 +1,5 @@
-# zkMORI
-Zero-Knowledge-Proof Implementation of Tree-based Machine Learning Models
+# ProofMind
+Zero-Knowledge-Proof Implementation of Neural Network
 
 ## Resources
 
