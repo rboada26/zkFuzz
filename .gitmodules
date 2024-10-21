@@ -1,3 +1,6 @@
 [submodule "circomspect"]
 	path = circomspect
 	url = git@github.com:trailofbits/circomspect.git
+[submodule "circom2llvm"]
+	path = circom2llvm
+	url = git@github.com:Koukyosyumei/circom2llvm.git
