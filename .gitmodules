@@ -1,0 +1,3 @@
+[submodule "circomspect"]
+	path = circomspect
+	url = git@github.com:trailofbits/circomspect.git
