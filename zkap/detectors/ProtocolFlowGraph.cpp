@@ -369,7 +369,8 @@ NodeVec PFGraph::flatExpression(Value *v) {
         }
     } else if (isa<CallInst>(inst)) {
         auto call_inst = dyn_cast<CallInst>(inst);
-        for (auto &opd : call_inst->arg_operands()) {
+        auto arg_operands = llvm::make_range(call_inst->op_begin(), call_inst->op_end() - 1);
+        for (auto &opd : arg_operands) {
             auto temp = flatExpression(opd);
             res.insert(res.end(), temp.begin(), temp.end());
         }

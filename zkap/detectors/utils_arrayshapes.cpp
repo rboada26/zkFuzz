@@ -28,7 +28,8 @@ std::pair<Value*, LLVMArrayShape> extractArrayShapeDefine(
     auto ptr_cast_inst = dyn_cast<Instruction>(ptr);
     auto array_val = ptr_cast_inst->getOperand(0);
     auto shape = LLVMArrayShape();
-    for (uint i = 0; i < inst->getNumArgOperands(); i++) {
+    uint num_arg_operands = inst->getNumOperands() - inst->getNumTotalBundleOperands() - 1;
+    for (uint i = 0; i < num_arg_operands; i++) {
         if (i == 0) {
             continue;
         }
