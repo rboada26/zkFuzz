@@ -1,6 +1,2 @@
-# ProofMind
-Zero-Knowledge-Proof Implementation of Neural Network
+# ProoFuzz
 
-## Resources
-
-- https://github.com/socathie/circomlib-ml
