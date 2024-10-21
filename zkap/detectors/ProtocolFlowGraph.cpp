@@ -119,7 +119,7 @@ PFGNode *PFGraph::locateSourceNode(Value *v) {
     }
     if (isConstant(v)) {
         auto res = this->createNode(PFGNodeType::Constant,
-                                    v->getNameOrAsOperand(), "", nullptr);
+                                    getNameOrAsOperand(v), "", nullptr);
         return res;
     }
     auto inst = dyn_cast<Instruction>(v);
@@ -127,7 +127,7 @@ PFGNode *PFGraph::locateSourceNode(Value *v) {
     if (isa<BinaryOperator>(inst) || isa<CallInst>(inst) ||
         isa<CmpInst>(inst)) {
         auto res = this->createNode(PFGNodeType::Expression,
-                                    v->getNameOrAsOperand(), "", inst);
+                                    getNameOrAsOperand(v), "", inst);
         return res;
     }
 
@@ -429,7 +429,7 @@ NodeVec PFGraph::getNodes(LLVMValueAccess lv) {
         return {this->getNode(PFGNodeType::Argument, name)};
     }
     if (isConstant(v)) {
-        std::string name = v->getNameOrAsOperand();
+        std::string name = getNameOrAsOperand(v);
         return {this->getNode(PFGNodeType::Constant, name)};
     }
     if (!isa<Instruction>(v)) {

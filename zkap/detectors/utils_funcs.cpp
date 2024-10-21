@@ -1,6 +1,16 @@
-#include "utils.hpp"
+#include "utils_funcs.hpp"
 
 std::clock_t _timer_start;
+
+std::string getNameOrAsOperand(Value *v) {
+  if (!v->getName().empty())
+    return std::string(v->getName());
+ 
+  std::string BBName;
+  raw_string_ostream OS(BBName);
+  v->printAsOperand(OS, false);
+  return OS.str();
+}
 
 StringVec stringSplit(std::string s, std::string splitor, int times = INT_MAX) {
     auto res = StringVec();
@@ -54,7 +64,7 @@ void printLLVMValue(Value *v) {
         std::cerr << "It is an nullptr";
         return;
     }
-    std::cerr << "Name: " << v->getNameOrAsOperand() << ",";
+    std::cerr << "Name: " << getNameOrAsOperand(v) << ",";
     v->print(errs());
     std::cerr << "\n";
 }

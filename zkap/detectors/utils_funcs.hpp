@@ -38,6 +38,8 @@ const std::string detecting_str = "Detecting: ";
 const std::regex number_suffix("\\.?\\d*$");
 const std::regex array_index_suffix("\\[\\d+\\]$");
 
+std::string getNameOrAsOperand(Value *v);
+
 StringVec stringSplit(std::string s, std::string splitor, int times);
 FunctionVec sortFunctions(Module *M);
 std::string removeIdxInLLVMName(std::string s);
