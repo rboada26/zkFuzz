@@ -8,17 +8,17 @@ include_directories(${LLVM_INCLUDE_DIRS})
 link_directories(${LLVM_LIBRARY_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
-add_library(DETECTORSPass MODULE PrintGraphInfo.cpp ProtocolFlowGraph.cpp utils_arrayshapes.cpp utils_basicinfo.cpp utils_funcs.cpp)
+# add_library(DETECTORSPass MODULE PrintGraphInfo.cpp ProtocolFlowGraph.cpp utils_arrayshapes.cpp utils_basicinfo.cpp utils_funcs.cpp)
 
-#add_library(detectors MODULE
-#    #utils_arrayshapes.cpp
-#    #utils_basicinfo.cpp
-#    #utils_funcs.cpp
-#    #ProtocolFlowGraph.cpp
-#   PrintGraphInfo.cpp
-#    #All.cpp
-#    #PrintGraphviz.cpp
-#)
+add_library(DETECTORSPass MODULE
+    utils_arrayshapes.cpp
+    utils_basicinfo.cpp
+    utils_funcs.cpp
+    ProtocolFlowGraph.cpp
+    PrintGraphInfo.cpp
+    All.cpp
+    PrintGraphviz.cpp
+)
 
 # Get proper shared-library behavior on all systems
 #if(APPLE)
