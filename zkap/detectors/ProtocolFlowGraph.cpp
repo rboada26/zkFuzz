@@ -47,7 +47,13 @@ std::string PFGNode::getHash() {
     return PFGNode::getHash(this->type, this->name);
 }
 
-std::string PFGNode::getName() { return this->name; }
+std::string PFGNode::getName() { 
+    if (this->type == PFGNodeType::Constant) {
+        return this->name;
+    } else {
+        return "%" + this->name; 
+    }
+}
 
 std::string PFGNode::format() {
     std::string s = this->getName();

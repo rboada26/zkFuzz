@@ -11,7 +11,7 @@ void printGraphviz(PFGraph* graph) {
 
     for (auto p : graph->nodes) {
         auto n = p.second;
-        sb << "\"<<" << nodeTypeEnumToAbbr(n->type) << ">>\n" << n->name;
+        sb << "\"<<" << nodeTypeEnumToAbbr(n->type) << ">>\n" << n->getName();
         
         std::string fillcolor, fontcolor, shape, bordercolor;
         switch (n->type) {
@@ -87,10 +87,10 @@ void printGraphviz(PFGraph* graph) {
         auto right = e->to;
         // left
         sb << "\"<<" << nodeTypeEnumToAbbr(left->type) << ">>\n"
-           << left->name << "\" -> ";
+           << left->getName() << "\" -> ";
         // right
         sb << "\"<<" << nodeTypeEnumToAbbr(right->type) << ">>\n"
-           << right->name << "\" ";
+           << right->getName() << "\" ";
         //
         if (e->type == PFGEdgeType::Constraint) {
             sb << "[label=\"" << edgeTypeEnumToAbbr(e->type) << "\", dir=none, color=\"black:invis:black\", style=\"dashed\"];\n";
