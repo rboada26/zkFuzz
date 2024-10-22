@@ -13,4 +13,4 @@ clang++ -shared -fPIC -o libDETECTORSPass.so \
     -Wl,--no-undefined \
     -I /usr/include/llvm \
     -L /usr/include/llvm \
-    ../All.cpp ../PrintGraphviz.cpp ../PrintGraphInfo.cpp ../ProtocolFlowGraph.cpp ../utils_arrayshapes.cpp ../utils_basicinfo.cpp ../utils_funcs.cpp
+    ../All.cpp ../PrintGraphviz.cpp ../PrintGraphInfo.cpp ../ProtocolFlowGraph.cpp ../utils_arrayshapes.cpp ../utils_basicinfo.cpp ../utils.cpp

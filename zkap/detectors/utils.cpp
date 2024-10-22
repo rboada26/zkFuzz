@@ -1,4 +1,4 @@
-#include "utils_funcs.hpp"
+#include "utils.hpp"
 
 std::clock_t _timer_start;
 
