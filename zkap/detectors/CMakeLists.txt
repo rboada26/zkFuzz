@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(DETECTORPass)
+project(CDGPass)
 
 set(CMAKE_CXX_STANDARD 14)
 
@@ -8,7 +8,7 @@ include_directories(${LLVM_INCLUDE_DIRS})
 link_directories(${LLVM_LIBRARY_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
-add_library(DETECTORSPass MODULE
+add_library(CDGPass MODULE
     utils_arrayshapes.cpp
     utils_basicinfo.cpp
     utils.cpp
@@ -18,5 +18,5 @@ add_library(DETECTORSPass MODULE
     PrintGraphviz.cpp
 )
 
-target_link_libraries(DETECTORSPass PRIVATE LLVMCore LLVMSupport LLVMIRReader LLVMInstCombine LLVMScalarOpts)
+target_link_libraries(CDGPass PRIVATE LLVMCore LLVMSupport LLVMIRReader LLVMInstCombine LLVMScalarOpts)
 

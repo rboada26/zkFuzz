@@ -6,7 +6,7 @@ make
 
 ls
 
-clang++ -shared -fPIC -o libDETECTORSPass.so \
+clang++ -shared -fPIC -o libCDGPass.so \
     $(llvm-config --cxxflags) \
     $(llvm-config --ldflags) \
     $(llvm-config --libs) \
