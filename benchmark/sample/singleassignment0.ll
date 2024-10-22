@@ -3,7 +3,8 @@ source_filename = "../../benchmark/sample/singleassignment0.circom"
 
 %struct_template_SingleAssignment0 = type { i128, i128, i128 }
 
-@constraint = external global i1
+; @constraint = external global i1
+@constraint = global i1 false
 
 define void @fn_intrinsic_utils_constraint(i128 %0, i128 %1, i1* %2) {
 entry:
@@ -95,3 +96,32 @@ exit:                                             ; preds = %body
 }
 
 attributes #0 = { nofree nosync nounwind readnone speculatable willreturn }
+
+define i32 @main() {
+entry:
+  ; Create an instance of the SingleAssignment0 struct
+  %instance = call %struct_template_SingleAssignment0* @fn_template_build_SingleAssignment0()
+
+  ; Get pointer to a.input and store value
+  %"gep.SingleAssignment0|a.input" = getelementptr inbounds %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 0
+  store i128 5, i128* %"gep.SingleAssignment0|a.input", align 4  ; Set 'a' = 5
+
+  ; Get pointer to b.input and store value
+  %"gep.SingleAssignment0|b.input" = getelementptr inbounds %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 1
+  store i128 7, i128* %"gep.SingleAssignment0|b.input", align 4  ; Set 'b' = 7
+
+  ; Initialize the instance
+  call void @fn_template_init_SingleAssignment0(%struct_template_SingleAssignment0* %instance)
+
+  ; Call the print function to display the result
+  ; call void @print_constraint()
+
+  ; Load the value of the constraint
+  %constraint_val = load i1, i1* @constraint
+
+  ; Zero-extend the i1 value to an i32 (since main returns i32)
+  %constraint_i32 = zext i1 %constraint_val to i32
+
+  ; Return 0 for successful execution
+  ret i32 12
+}
