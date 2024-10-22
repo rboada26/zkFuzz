@@ -5,43 +5,68 @@ void printGraphviz(PFGraph* graph) {
     sb << "digraph "
        << "\"" << graph->getName() << "\""
        << " {\n";
+    sb << "graph [fontname=\"Arial\", fontsize=12, bgcolor=\"#f9f9f9\"];\n";
+    sb << "node [shape=rectangle, style=\"filled,rounded\", fontname=\"Arial\", fontsize=10, penwidth=1.5];\n";
+    sb << "edge [fontname=\"Arial\", fontsize=10, arrowsize=0.8, penwidth=1.2];\n";
+
     for (auto p : graph->nodes) {
         auto n = p.second;
         sb << "\"<<" << nodeTypeEnumToAbbr(n->type) << ">>\n" << n->name;
-        std::string color;
+        std::string fillcolor, fontcolor, shape;
         switch (n->type) {
             case PFGNodeType::Argument:
-                color = "#889aa4";
+                fillcolor = "#889aa4";
+                fontcolor = "#ffffff";
+                shape = "ellipse";
                 break;
             case PFGNodeType::ComponentInput:
-                color = "#ca9a8a";
+                fillcolor = "#ca9a8a";
+                fontcolor = "#ffffff";
+                shape = "box";
                 break;
             case PFGNodeType::ComponentOutput:
-                color = "#bccd81";
+                fillcolor = "#bccd81";
+                fontcolor = "#000000";
+                shape = "box";
                 break;
             case PFGNodeType::InputSignal:
-                color = "#c7aaf6";
+                fillcolor = "#c7aaf6";
+                fontcolor = "#000000";
+                shape = "ellipse";
                 break;
             case PFGNodeType::IntermediateSignal:
-                color = "#f8edfc";
+                fillcolor = "#f8edfc";
+                fontcolor = "#000000";
+                shape = "ellipse";
                 break;
             case PFGNodeType::OutputSignal:
-                color = "#d0fbe1";
+                fillcolor = "#d0fbe1";
+                fontcolor = "#000000";
+                shape = "ellipse";
                 break;
             case PFGNodeType::Expression:
-                color = "#cccccc";
+                fillcolor = "#cccccc";
+                fontcolor = "#000000";
+                shape = "diamond";
                 break;
             case PFGNodeType::Constant:
-                color = "#000000";
+                fillcolor = "#000000";
+                fontcolor = "#ffffff";
+                shape = "hexagon";
                 break;
             case PFGNodeType::Component:
-                color = "#000000";
+                fillcolor = "#000000";
+                fontcolor = "#ffffff";
+                shape = "hexagon";
                 break;
             case PFGNodeType::Variable:
-                color = "#000000";
+                fillcolor = "#000000";
+                fontcolor = "#ffffff";
+                shape = "hexagon";
                 break;
         }
-        sb << "\" [color=\"" << color << "\"];\n";
+        // sb << "\" [color=\"" << color << "\"];\n";
+        sb << "\" [fillcolor=\"" << fillcolor << "\", fontcolor=\"" << fontcolor << "\", shape=\"" << shape << "\", style=\"filled\"];\n";
     }
 
     for (auto p : graph->edges) {
@@ -56,16 +81,9 @@ void printGraphviz(PFGraph* graph) {
            << right->name << "\" ";
         //
         if (e->type == PFGEdgeType::Constraint) {
-            sb << "[";
-            sb << "label=" << edgeTypeEnumToAbbr(e->type) << ", ";
-            sb << "dir=none"
-               << ", ";
-            sb << "color=\"black:invis:black\"";
-            sb << "]\n";
+            sb << "[label=\"" << edgeTypeEnumToAbbr(e->type) << "\", dir=none, color=\"black:invis:black\", style=\"dashed\"];\n";
         } else if (e->type == PFGEdgeType::Assignment) {
-            sb << "[";
-            sb << "label=" << edgeTypeEnumToAbbr(e->type);
-            sb << "]\n";
+            sb << "[label=\"" << edgeTypeEnumToAbbr(e->type) << "\", color=\"darkgreen\", arrowhead=\"vee\"];\n";
         }
     }
     sb << "}\n";
