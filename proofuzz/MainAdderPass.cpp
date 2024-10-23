@@ -15,18 +15,7 @@ namespace
 
         bool runOnModule(Module &M) override
         {
-            // Step 1: Modify external global variable `@constraint` to initialize with `false`.
-
-            for (GlobalVariable &GV : M.globals())
-            {
-                if (GV.getName().contains("constraint") && GV.isDeclaration())
-                {
-                    GV.setLinkage(GlobalValue::InternalLinkage);
-                    GV.setInitializer(ConstantInt::get(Type::getInt1Ty(M.getContext()), 0));
-                }
-            }
-
-            // Step 2: Create a `main` function that initializes an instance of the target circuit.
+            // Create a `main` function that initializes an instance of the target circuit.
             createMainFunction(M);
 
             return true;

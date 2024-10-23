@@ -13,4 +13,4 @@ clang++ -shared -fPIC -o libProoFuzzPass.so \
     -Wl,--no-undefined \
     -I /usr/include/llvm \
     -L /usr/include/llvm \
-    ../MainAdderPass.cpp
+    ../InitializeConstraintPass.cpp ../MainAdderPass.cpp
