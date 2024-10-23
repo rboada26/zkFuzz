@@ -175,13 +175,12 @@ namespace
             }
 
             // Return based on the value of `constraint`
-            GlobalVariable *constraintVar = M.getGlobalVariable("constraint");
-            Value *constraintVal = Builder.CreateLoad(Builder.getInt1Ty(), constraintVar, "constraint_val");
-            Value *constraintI32 = Builder.CreateZExt(constraintVal, Builder.getInt32Ty(), "constraint_i32");
-            Builder.CreateRet(constraintI32);
-
-            // Finalize the function by setting up the entry point
-            Builder.SetInsertPoint(&entry->back());
+            // GlobalVariable *constraintVar = M.getGlobalVariable("constraint");
+            // Value *constraintVal = Builder.CreateLoad(Builder.getInt1Ty(), constraintVar, "constraint_val");
+            // Value *constraintI32 = Builder.CreateZExt(constraintVal, Builder.getInt32Ty(), "constraint_i32");
+            // Builder.CreateRet(constraintI32);
+            Value *zeroVal = Builder.getInt32(0);
+            Builder.CreateRet(zeroVal);
         }
 
         /**

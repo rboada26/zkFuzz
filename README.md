@@ -30,5 +30,8 @@ sh ./build.sh
 ## Example
 
 ```bash
-circom2llvm --input path/to/circomfile_or_dir --output path/to/output
+# compile circom to llvm ir
+circom2llvm --input ./benchmark/sample/iszero_safe.circom --output ./benchmark/sample/
+
+# 
 ```
