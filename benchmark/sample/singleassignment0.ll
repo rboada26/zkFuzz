@@ -1,10 +1,9 @@
 ; ModuleID = 'singleassignment0.circom'
-source_filename = "singleassignment0.circom"
+source_filename = "./benchmark/sample/singleassignment0.circom"
 
 %struct_template_SingleAssignment0 = type { i128, i128, i128 }
 
-; @constraint = external global i1
-@constraint = global i1 false
+@constraint = external global i1
 
 define void @fn_intrinsic_utils_constraint(i128 %0, i128 %1, i1* %2) {
 entry:
@@ -71,11 +70,11 @@ entry:
   %"gep.SingleAssignment0|a.input" = getelementptr inbounds %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %0, i32 0, i32 0
   %read.a.input = load i128, i128* %"gep.SingleAssignment0|a.input", align 4
   store i128 %read.a.input, i128* %initial.a.input, align 4
-  %initial.out.output = alloca i128, align 8
   %initial.b.input = alloca i128, align 8
   %"gep.SingleAssignment0|b.input" = getelementptr inbounds %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %0, i32 0, i32 1
   %read.b.input = load i128, i128* %"gep.SingleAssignment0|b.input", align 4
   store i128 %read.b.input, i128* %initial.b.input, align 4
+  %initial.out.output = alloca i128, align 8
   br label %body
 
 body:                                             ; preds = %entry
