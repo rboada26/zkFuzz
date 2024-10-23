@@ -32,6 +32,23 @@ sh ./build.sh
 ```bash
 # compile circom to llvm ir
 circom2llvm --input ./benchmark/sample/iszero_safe.circom --output ./benchmark/sample/
+```
 
-# 
+- Visualization
+
+```bash
+opt -enable-new-pm=0 -load ./zkap/detectors/build/libCDGPass.so --PrintGraphviz -S ./benchmark/sample/iszero_safe.ll -o /dev/null 2> ./benchmark/sample/iszero_safe.dot
+```
+
+<img src="./benchmark/sample/iszero_safe_graphviz.svg" width=900>
+
+
+- Execution
+
+```bash
+# modify .ll file 
+opt -enable-new-pm=0 -load ./proofuzz/build/libProoFuzzPass.so  --InitializeConstraintPass --MainAdderPass -S ./benchmark/sample/iszero_safe.ll -o ./benchmark/sample/iszero_safe_modified.ll
+
+# execute .ll file
+lli ./benchmark/sample/iszero_safe_modified.ll
 ```
