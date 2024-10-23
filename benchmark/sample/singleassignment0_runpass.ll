@@ -101,14 +101,14 @@ exit:                                             ; preds = %body
 define i32 @main() {
 entry:
   %instance = call %struct_template_SingleAssignment0* @fn_template_build_SingleAssignment0()
-  %a.input = getelementptr %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 0
-  store i128 5, i128* %a.input, align 4
-  %b.input = getelementptr %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 1
-  store i128 7, i128* %b.input, align 4
+  %"gep.SingleAssignment0|a.input" = getelementptr %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 0
+  store i128 5, i128* %"gep.SingleAssignment0|a.input", align 4
+  %"gep.SingleAssignment0|b.input" = getelementptr %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 1
+  store i128 7, i128* %"gep.SingleAssignment0|b.input", align 4
   call void @fn_template_init_SingleAssignment0(%struct_template_SingleAssignment0* %instance)
   %constraint_val = load i1, i1* @constraint, align 1
   %constraint_i32 = zext i1 %constraint_val to i32
-  ret i32 12 ;%constraint_i32
+  ret i32 132
 }
 
 attributes #0 = { nofree nosync nounwind readnone speculatable willreturn }
