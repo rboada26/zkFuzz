@@ -1,9 +1,8 @@
-; ModuleID = 'singleassignment0.circom'
+; ModuleID = '../benchmark/sample/singleassignment0.ll'
 source_filename = "singleassignment0.circom"
 
 %struct_template_SingleAssignment0 = type { i128, i128, i128 }
 
-; @constraint = external global i1
 @constraint = global i1 false
 
 define void @fn_intrinsic_utils_constraint(i128 %0, i128 %1, i1* %2) {
@@ -86,6 +85,10 @@ body:                                             ; preds = %entry
   %read.b.input2 = load i128, i128* %initial.b.input, align 4
   %add3 = add i128 %read.b.input2, 1
   call void @fn_intrinsic_utils_constraint(i128 %read.out.output, i128 %add3, i1* @constraint)
+  %read.out.output1 = load i128, i128* %initial.out.output, align 4
+  %read.b.input22 = load i128, i128* %initial.b.input, align 4
+  %add33 = add i128 %read.b.input22, 1
+  call void @fn_intrinsic_utils_constraint(i128 %read.out.output1, i128 %add33, i1* @constraint)
   br label %exit
 
 exit:                                             ; preds = %body
@@ -93,6 +96,19 @@ exit:                                             ; preds = %body
   %"gep.SingleAssignment0|out.output" = getelementptr inbounds %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %0, i32 0, i32 2
   store i128 %read.out.output4, i128* %"gep.SingleAssignment0|out.output", align 4
   ret void
+}
+
+define i32 @main() {
+entry:
+  %instance = call %struct_template_SingleAssignment0* @fn_template_build_SingleAssignment0()
+  %a.input = getelementptr %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 0
+  store i128 5, i128* %a.input, align 4
+  %b.input = getelementptr %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %instance, i32 0, i32 1
+  store i128 7, i128* %b.input, align 4
+  call void @fn_template_init_SingleAssignment0(%struct_template_SingleAssignment0* %instance)
+  %constraint_val = load i1, i1* @constraint, align 1
+  %constraint_i32 = zext i1 %constraint_val to i32
+  ret i32 12 ;%constraint_i32
 }
 
 attributes #0 = { nofree nosync nounwind readnone speculatable willreturn }
