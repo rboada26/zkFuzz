@@ -107,10 +107,10 @@ namespace
             Value *instance = Builder.CreateCall(fnBuildSingleAssignment, {}, "instance");
 
             // Get pointers to `a.input` and `b.input` and store values
-            Value *aInputPtr = getGEP(Context, Builder, instance, 0, "a.input");
+            Value *aInputPtr = getGEP(Context, Builder, instance, 0, "gep.SingleAssignment0|a.input");
             Builder.CreateStore(ConstantInt::get(Builder.getInt128Ty(), 5), aInputPtr);
 
-            Value *bInputPtr = getGEP(Context, Builder, instance, 1, "b.input");
+            Value *bInputPtr = getGEP(Context, Builder, instance, 1, "gep.SingleAssignment0|b.input");
             Builder.CreateStore(ConstantInt::get(Builder.getInt128Ty(), 7), bInputPtr);
 
             // Call `fn_template_init_SingleAssignment0`
