@@ -1,4 +1,4 @@
-# Doc of ProoFuzz
+# Basic of Circom
 
 ## Typical ZKP Workload (with Circom)
 
