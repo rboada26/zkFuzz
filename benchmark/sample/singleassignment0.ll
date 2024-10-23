@@ -1,5 +1,5 @@
 ; ModuleID = 'singleassignment0.circom'
-source_filename = "../../benchmark/sample/singleassignment0.circom"
+source_filename = "./benchmark/sample/singleassignment0.circom"
 
 %struct_template_SingleAssignment0 = type { i128, i128, i128 }
 
@@ -66,7 +66,6 @@ declare noalias i8* @malloc(i32)
 
 define void @fn_template_init_SingleAssignment0(%struct_template_SingleAssignment0* %0) {
 entry:
-  %initial.out.output = alloca i128, align 8
   %initial.a.input = alloca i128, align 8
   %"gep.SingleAssignment0|a.input" = getelementptr inbounds %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %0, i32 0, i32 0
   %read.a.input = load i128, i128* %"gep.SingleAssignment0|a.input", align 4
@@ -75,6 +74,7 @@ entry:
   %"gep.SingleAssignment0|b.input" = getelementptr inbounds %struct_template_SingleAssignment0, %struct_template_SingleAssignment0* %0, i32 0, i32 1
   %read.b.input = load i128, i128* %"gep.SingleAssignment0|b.input", align 4
   store i128 %read.b.input, i128* %initial.b.input, align 4
+  %initial.out.output = alloca i128, align 8
   br label %body
 
 body:                                             ; preds = %entry
