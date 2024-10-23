@@ -1,5 +1,8 @@
 # ProoFuzz
 
+- [Doc](./doc/)
+- [Meeting Notes](./NOTE.md)
+
 ## Build
 
 - circom2llvm
