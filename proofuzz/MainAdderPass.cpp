@@ -2,6 +2,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include <regex>
 
 using namespace llvm;
 
@@ -16,77 +17,40 @@ namespace
         {
             // Step 1: Modify external global variable `@constraint` to initialize with `false`.
 
-            GlobalVariable *constraint = M.getGlobalVariable("constraint");
-            if (constraint && constraint->isDeclaration())
+            for (GlobalVariable &GV : M.globals())
             {
-                // Make it internal and initialize with `false`
-                constraint->setLinkage(GlobalValue::InternalLinkage);
-                constraint->setInitializer(ConstantInt::get(Type::getInt1Ty(M.getContext()), 0));
+                if (GV.getName().contains("constraint") && GV.isDeclaration())
+                {
+                    GV.setLinkage(GlobalValue::InternalLinkage);
+                    GV.setInitializer(ConstantInt::get(Type::getInt1Ty(M.getContext()), 0));
+                }
             }
 
-            // Step 2: Modify function `fn_template_init_SingleAssignment0` to include `@constraint` and add necessary operations.
-            Function *fnInitSingleAssignment = M.getFunction("fn_template_init_SingleAssignment0");
-            if (fnInitSingleAssignment)
-            {
-                modifyFnTemplateInit(fnInitSingleAssignment, M);
-            }
-
-            // Step 3: Create a `main` function that initializes an instance of the `SingleAssignment0` struct.
+            // Step 2: Create a `main` function that initializes an instance of the target circuit.
             createMainFunction(M);
 
             return true;
         }
 
-        void modifyFnTemplateInit(Function *F, Module &M)
+        std::vector<Instruction *> findAllocas(Function *F, const std::string &pattern)
         {
-            LLVMContext &Context = M.getContext();
-            IRBuilder<> Builder(Context);
+            std::vector<Instruction *> allocas;
+            std::regex regexPattern(pattern);
 
-            // Traverse the function and locate the `body` block to insert additional logic
-            for (auto &BB : *F)
-            {
-                if (BB.getName() == "body")
-                {
-                    // Insert at the end of the body block
-                    Builder.SetInsertPoint(BB.getTerminator());
-
-                    // Load values from `%initial.out.output` and `%initial.b.input`
-                    Instruction *outOutput = findAlloca(F, "initial.out.output");
-                    Instruction *bInput = findAlloca(F, "initial.b.input");
-
-                    Value *readOutOutput = Builder.CreateLoad(Builder.getInt128Ty(), outOutput, "read.out.output");
-                    Value *readBInput2 = Builder.CreateLoad(Builder.getInt128Ty(), bInput, "read.b.input2");
-
-                    // Add 1 to readBInput2 (mimicking `%add3`)
-                    Value *add3 = Builder.CreateAdd(readBInput2, ConstantInt::get(Builder.getInt128Ty(), 1), "add3");
-
-                    // Call `fn_intrinsic_utils_constraint`
-                    Function *constraintFunc = M.getFunction("fn_intrinsic_utils_constraint");
-                    GlobalVariable *constraintVar = M.getGlobalVariable("constraint");
-                    Builder.CreateCall(constraintFunc, {readOutOutput, add3, constraintVar});
-
-                    break;
-                }
-            }
-        }
-
-        // Helper function to find alloca instruction by its name
-        Instruction *findAlloca(Function *F, StringRef name)
-        {
             for (auto &BB : *F)
             {
                 for (auto &I : BB)
                 {
                     if (AllocaInst *AI = dyn_cast<AllocaInst>(&I))
                     {
-                        if (AI->getName() == name)
+                        if (std::regex_search(AI->getName().str(), regexPattern))
                         {
-                            return AI;
+                            allocas.push_back(AI);
                         }
                     }
                 }
             }
-            return nullptr;
+            return allocas;
         }
 
         void createMainFunction(Module &M)
@@ -102,26 +66,56 @@ namespace
             BasicBlock *entry = BasicBlock::Create(Context, "entry", mainFunc);
             Builder.SetInsertPoint(entry);
 
-            // Call `fn_template_build_SingleAssignment0`
-            Function *fnBuildSingleAssignment = M.getFunction("fn_template_build_SingleAssignment0");
-            Value *instance = Builder.CreateCall(fnBuildSingleAssignment, {}, "instance");
+            std::vector<Instruction *> inputs, outputs;
+            std::string circuitName;
 
-            // Get pointers to `a.input` and `b.input` and store values
-            Value *aInputPtr = getGEP(Context, Builder, instance, 0, "gep.SingleAssignment0|a.input");
-            Builder.CreateStore(ConstantInt::get(Builder.getInt128Ty(), 5), aInputPtr);
+            for (Function &F : M)
+            {
+                if (F.getName().contains("fn_template_init"))
+                {
+                    circuitName = F.getName().substr(17).str();
+                    for (auto &BB : F)
+                    {
+                        if (BB.getName() == "entry")
+                        {
+                            // Extract all inputs and outputs using pattern matching
+                            inputs = findAllocas(&F, "initial.*.input");
+                            outputs = findAllocas(&F, "initial.*.output");
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
 
-            Value *bInputPtr = getGEP(Context, Builder, instance, 1, "gep.SingleAssignment0|b.input");
-            Builder.CreateStore(ConstantInt::get(Builder.getInt128Ty(), 7), bInputPtr);
+            for (Function &F : M)
+            {
+                if (F.getName().contains("fn_template_build"))
+                {
+                    Value *instance = Builder.CreateCall(&F, {}, "instance");
+                    unsigned index = 0;
+                    // gep.SingleAssignment0|b.input
+                    for (auto &v : inputs)
+                    {
+                        Value *inputPtr = getGEP(Context, Builder, instance, index++, ("gep." + circuitName + "|" + v->getName().substr(8).str()).c_str());
+                        Builder.CreateStore(ConstantInt::get(Builder.getInt128Ty(), 123), inputPtr); // 123 is the example values
+                    }
 
-            // Call `fn_template_init_SingleAssignment0`
-            Function *fnInitSingleAssignment = M.getFunction("fn_template_init_SingleAssignment0");
-            Builder.CreateCall(fnInitSingleAssignment, {instance});
+                    std::string initFuncName = "fn_template_init_" + circuitName;
+                    Function *initFunc = M.getFunction(initFuncName);
+                    if (initFunc)
+                    {
+                        Builder.CreateCall(initFunc, {instance});
+                    }
+
+                    break;
+                }
+            }
 
             // Load the value of `constraint` and zero-extend it to i32
             GlobalVariable *constraintVar = M.getGlobalVariable("constraint");
             Value *constraintVal = Builder.CreateLoad(Builder.getInt1Ty(), constraintVar, "constraint_val");
             Value *constraintI32 = Builder.CreateZExt(constraintVal, Builder.getInt32Ty(), "constraint_i32");
-
             // Return 0 or 1 based on the constraint value
             Builder.CreateRet(constraintI32);
 
