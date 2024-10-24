@@ -2,7 +2,7 @@
 
 ## 2024/10/24
 
-- [Slide]()
+- [Slide](https://docs.google.com/presentation/d/1-e6YavZV6VnUoka9qgbIA8ElPQrJT7enYNgGHgy4OBk/edit?usp=sharing)
 
 ### Progress
 
