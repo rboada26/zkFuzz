@@ -15,6 +15,8 @@
 
 ### TODO
 
+- Implement a dirty demo that uses AFL to do fuzzing against the output of `circom2llvmP`
+
 ## 2024/10/17
 
 - [Slide](https://docs.google.com/presentation/d/15swD048u14BJ3p698HyHdDwfmhpyPwrMB8-ZmEPck2o/edit?usp=sharing)
