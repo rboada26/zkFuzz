@@ -1,5 +1,15 @@
 # Ideas
 
+## 2024/11/12
+
+### TODO 
+
+- Implement a simple parser that extracts the constraints from Circom
+- Formulate a "free-variable-bug", meaning a program variable exists that does not show in the constraints set.
+- Check whether we can declare new constraints within the if-else branch.
+- Analyze the distribution of operations contributing to the constraints and how they are distributed across the code.
+- Check whether Circom supports recursive calls.
+
 ## 2024/10/24
 
 - [Slide](https://docs.google.com/presentation/d/1-e6YavZV6VnUoka9qgbIA8ElPQrJT7enYNgGHgy4OBk/edit?usp=sharing)
