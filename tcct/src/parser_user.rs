@@ -162,17 +162,68 @@ impl DebugExpression {
             Expression::Call { id, args, .. } => {
                 writeln!(f, "{}Call", indentation)?;
                 writeln!(f, "{}  id: {}", indentation, id)?;
-                writeln!(
-                    f,
-                    "{}  args: {:?}",
-                    indentation,
-                    &args
-                        .iter()
-                        .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                        .collect::<Vec<_>>()
-                )
+                writeln!(f, "{}  args:", indentation)?;
+                for arg0 in args {
+                    DebugExpression(arg0.clone()).pretty_fmt(f, indent + 2)?;
+                }
+                Ok(())
             }
-            _ => writeln!(f, "{}Unhandled Expression", indentation),
+            Expression::ArrayInLine { values, .. } => {
+                writeln!(f, "{}ArrayInLine", indentation)?;
+                writeln!(f, "{}  values:", indentation)?;
+                for v in values {
+                    DebugExpression(v.clone()).pretty_fmt(f, indent + 2)?;
+                }
+                Ok(())
+            }
+            Expression::Tuple { values, .. } => {
+                writeln!(f, "{}Tuple", indentation)?;
+                writeln!(f, "{}  values:", indentation)?;
+                for v in values {
+                    DebugExpression(v.clone()).pretty_fmt(f, indent + 2)?;
+                }
+                Ok(())
+            }
+            Expression::UniformArray {
+                value, dimension, ..
+            } => {
+                writeln!(f, "{}UniformArray", indentation)?;
+                writeln!(f, "{}  value:", indentation)?;
+                DebugExpression(*value.clone()).pretty_fmt(f, indent + 2)?;
+                writeln!(f, "{}  dimension:", indentation)?;
+                DebugExpression(*dimension.clone()).pretty_fmt(f, indent + 2)
+            }
+            Expression::BusCall { id, args, .. } => {
+                writeln!(f, "{}BusCall", indentation)?;
+                writeln!(f, "{}  id:", id)?;
+                writeln!(f, "{}  args:", indentation)?;
+                for a in args {
+                    DebugExpression(a.clone()).pretty_fmt(f, indent + 2)?;
+                }
+                Ok(())
+            }
+            Expression::AnonymousComp {
+                id,
+                is_parallel,
+                params,
+                signals,
+                names,
+                ..
+            } => {
+                writeln!(f, "{}AnonymousComp", indentation)?;
+                writeln!(f, "{}  id: {}", indentation, id)?;
+                //writeln!(f, "{}  name: {}", indentation, names)?;
+                writeln!(f, "{}  is_parallel: {}", indentation, is_parallel)?;
+                writeln!(f, "{}  params:", indentation)?;
+                for p in params {
+                    DebugExpression(p.clone()).pretty_fmt(f, indent + 2)?;
+                }
+                writeln!(f, "{}  signals:", indentation)?;
+                for s in signals {
+                    DebugExpression(s.clone()).pretty_fmt(f, indent + 2)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -186,9 +237,10 @@ impl ExtendedStatement {
                     cond,
                     if_case,
                     else_case,
+                    meta,
                     ..
                 } => {
-                    writeln!(f, "{}IfThenElse:", indentation)?;
+                    writeln!(f, "{}IfThenElse ({}):", indentation, meta.elem_id)?;
                     writeln!(f, "{}  Condition:", indentation)?;
                     DebugExpression(cond.clone()).pretty_fmt(f, indent + 2)?;
                     writeln!(f, "{}  If Case:", indentation)?;
@@ -199,30 +251,31 @@ impl ExtendedStatement {
                         ExtendedStatement::DebugStatement(*else_case.clone())
                             .pretty_fmt(f, indent + 2)?;
                     }
-                    writeln!(f, "")
+                    Ok(())
                 }
-                Statement::While { cond, stmt, .. } => {
-                    writeln!(f, "{}While:", indentation)?;
+                Statement::While {
+                    cond, stmt, meta, ..
+                } => {
+                    writeln!(f, "{}While ({}):", indentation, meta.elem_id)?;
                     writeln!(f, "{}  Condition:", indentation)?;
                     DebugExpression(cond.clone()).pretty_fmt(f, indent + 2)?;
                     writeln!(f, "{}  Statement:", indentation)?;
-                    ExtendedStatement::DebugStatement(*stmt.clone()).pretty_fmt(f, indent + 2)?;
-                    writeln!(f, "")
+                    ExtendedStatement::DebugStatement(*stmt.clone()).pretty_fmt(f, indent + 2)
                 }
-                Statement::Return { value, .. } => {
-                    writeln!(f, "{}Return:", indentation)?;
+                Statement::Return { value, meta, .. } => {
+                    writeln!(f, "{}Return ({}):", indentation, meta.elem_id)?;
                     writeln!(f, "{}  Value:", indentation)?;
-                    DebugExpression(value.clone()).pretty_fmt(f, indent + 2)?;
-                    writeln!(f, "")
+                    DebugExpression(value.clone()).pretty_fmt(f, indent + 2)
                 }
                 Statement::Substitution {
                     var,
                     access,
                     op,
                     rhe,
+                    meta,
                     ..
                 } => {
-                    writeln!(f, "{}Substitution:", indentation)?;
+                    writeln!(f, "{}Substitution ({}):", indentation, meta.elem_id)?;
                     writeln!(f, "{}  Variable: {}", indentation, var)?;
                     writeln!(
                         f,
@@ -240,318 +293,85 @@ impl ExtendedStatement {
                         DebugAssignOp(op.clone())
                     )?;
                     writeln!(f, "{}  Right-Hand Expression:", indentation)?;
-                    DebugExpression(rhe.clone()).pretty_fmt(f, indent + 2)?;
-                    writeln!(f, "")
+                    DebugExpression(rhe.clone()).pretty_fmt(f, indent + 2)
                 }
-                Statement::Block { stmts, .. } => {
-                    writeln!(f, "{}Block:", indentation)?;
+                Statement::Block { stmts, meta, .. } => {
+                    writeln!(f, "{}Block ({}):", indentation, meta.elem_id)?;
+                    writeln!(f, "{}    ------------------------", indentation)?;
                     for stmt in stmts {
                         ExtendedStatement::DebugStatement(stmt.clone())
                             .pretty_fmt(f, indent + 2)?;
+                        writeln!(f, "{}    ------------------------", indentation)?;
                     }
-                    writeln!(f, "")
+                    Ok(())
                 }
-                Statement::Assert { arg, .. } => {
-                    writeln!(f, "{}Assert:", indentation)?;
+                Statement::Assert { arg, meta, .. } => {
+                    writeln!(f, "{}Assert ({}):", indentation, meta.elem_id)?;
                     writeln!(f, "{}  Argument:", indentation)?;
-                    DebugExpression(arg.clone()).pretty_fmt(f, indent + 2)?;
-                    writeln!(f, "")
+                    DebugExpression(arg.clone()).pretty_fmt(f, indent + 2)
                 }
-                _ => writeln!(f, "{}Unhandled Statement", indentation),
+                Statement::InitializationBlock {
+                    meta,
+                    xtype: _,
+                    initializations,
+                } => {
+                    writeln!(f, "{}InitializationBlock ({})", indentation, meta.elem_id)?;
+                    writeln!(f, "{}  initializations:", indentation,)?;
+                    for i in initializations {
+                        ExtendedStatement::DebugStatement(i.clone()).pretty_fmt(f, indent + 2)?;
+                    }
+                    Ok(())
+                }
+                Statement::Declaration {
+                    meta,
+                    xtype: _,
+                    name,
+                    dimensions,
+                    is_constant,
+                } => {
+                    writeln!(f, "{}Declaration ({})", indentation, meta.elem_id)?;
+                    writeln!(f, "{}  name: {}", indentation, name)?;
+                    writeln!(f, "{}  dimensions:", indentation)?;
+                    for dim in dimensions {
+                        DebugExpression(dim.clone()).pretty_fmt(f, indent + 2)?;
+                    }
+                    writeln!(f, "{}  is_constant: {}", indentation, is_constant)
+                }
+                Statement::MultSubstitution {
+                    lhe, op, rhe, meta, ..
+                } => {
+                    writeln!(f, "{}MultSubstitution ({})", indentation, meta.elem_id)?;
+                    writeln!(f, "{}  Op: {:?}", indentation, DebugAssignOp(op.clone()))?;
+                    writeln!(f, "{}  Left-Hand Expression:", indentation)?;
+                    DebugExpression(lhe.clone()).pretty_fmt(f, indent + 2)?;
+                    writeln!(f, "{}  Right-Hand Expression:", indentation)?;
+                    DebugExpression(rhe.clone()).pretty_fmt(f, indent + 2)
+                }
+                Statement::UnderscoreSubstitution { op, rhe, meta, .. } => {
+                    writeln!(
+                        f,
+                        "{}UnderscoreSubstitution ({})",
+                        indentation, meta.elem_id
+                    )?;
+                    writeln!(f, "{}  Op: {:?}", indentation, DebugAssignOp(op.clone()))?;
+                    writeln!(f, "{}  Right-Hand Expression:", indentation)?;
+                    DebugExpression(rhe.clone()).pretty_fmt(f, indent + 2)
+                }
+                Statement::ConstraintEquality { lhe, rhe, meta, .. } => {
+                    writeln!(f, "{}ConstraintEquality ({})", indentation, meta.elem_id)?;
+                    writeln!(f, "{}  Left-Hand Expression:", indentation)?;
+                    DebugExpression(lhe.clone()).pretty_fmt(f, indent + 2)?;
+                    writeln!(f, "{}  Right-Hand Expression:", indentation)?;
+                    DebugExpression(rhe.clone()).pretty_fmt(f, indent + 2)
+                }
+                Statement::LogCall { args, .. } => {
+                    writeln!(f, "{}LogCall", indentation)
+                }
             },
             ExtendedStatement::Ret => writeln!(f, "{}Ret", indentation),
         }
     }
 }
-
-/*
-impl fmt::Debug for DebugExpression {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.0 {
-            Expression::InfixOp {
-                meta: _,
-                lhe,
-                infix_op,
-                rhe,
-            } => f
-                .debug_struct("InfixOp")
-                .field("infix_op", &DebugExpressionInfixOpcode(*infix_op))
-                .field("lhe", &DebugExpression(*lhe.clone()))
-                .field("rhe", &DebugExpression(*rhe.clone()))
-                .finish(),
-            Expression::PrefixOp {
-                meta: _,
-                prefix_op,
-                rhe,
-            } => f
-                .debug_struct("PrefixOp")
-                .field("prefix_op", &DebugExpressionPrefixOpcode(*prefix_op))
-                .field("rhe", &DebugExpression(*rhe.clone()))
-                .finish(),
-            Expression::InlineSwitchOp {
-                meta: _,
-                cond,
-                if_true,
-                if_false,
-            } => f
-                .debug_struct("InlineSwitchOp")
-                .field("cond", &DebugExpression(*cond.clone()))
-                .field("if_true", &DebugExpression(*if_true.clone()))
-                .field("if_false", &DebugExpression(*if_false.clone()))
-                .finish(),
-            Expression::ParallelOp { meta: _, rhe } => f
-                .debug_struct("ParallelOp")
-                .field("rhe", &DebugExpression(*rhe.clone()))
-                .finish(),
-            Expression::Variable {
-                meta: _,
-                name,
-                access,
-            } => f
-                .debug_struct("Variable")
-                .field("name", &name)
-                .field(
-                    "access",
-                    &access
-                        .iter()
-                        .map(|arg0: &Access| DebugAccess(arg0.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                .finish(),
-            Expression::Number(_, value) => {
-                //write!("Number {}", "{}", value)
-                f.debug_struct("Number").field("value", &value).finish()
-            }
-            Expression::Call { meta: _, id, args } => f
-                .debug_struct("Call")
-                .field("id", &id)
-                .field(
-                    "args",
-                    &args
-                        .iter()
-                        .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                .finish(),
-            Expression::BusCall { meta: _, id, args } => f
-                .debug_struct("BusCall")
-                .field("id", &id)
-                .field(
-                    "args",
-                    &args
-                        .iter()
-                        .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                .finish(),
-            Expression::AnonymousComp {
-                meta: _,
-                id,
-                is_parallel,
-                params,
-                signals,
-                names: _,
-            } => f
-                .debug_struct("AnonymousComp")
-                .field("id", &id)
-                .field("is_parallel", &is_parallel)
-                .field(
-                    "params",
-                    &params
-                        .iter()
-                        .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                .field(
-                    "signals",
-                    &signals
-                        .iter()
-                        .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                //.field("names", names)
-                .finish(),
-            Expression::ArrayInLine { meta: _, values } => f
-                .debug_struct("ArrayInLine")
-                .field(
-                    "values",
-                    &values
-                        .iter()
-                        .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                .finish(),
-            Expression::Tuple { meta: _, values } => f
-                .debug_struct("Tuple")
-                .field(
-                    "values",
-                    &values
-                        .iter()
-                        .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                .finish(),
-            Expression::UniformArray {
-                meta: _,
-                value,
-                dimension,
-            } => f
-                .debug_struct("UniformArray")
-                .field("value", &DebugExpression(*value.clone()))
-                .field("dimension", &DebugExpression(*dimension.clone()))
-                .finish(),
-        }
-    }
-}
-
-impl fmt::Debug for ExtendedStatement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self {
-            ExtendedStatement::DebugStatement(stmt) => {
-                match &stmt {
-                    Statement::IfThenElse {
-                        meta: _,
-                        cond,
-                        if_case,
-                        else_case,
-                    } => {
-                        if else_case.is_none() {
-                            f.debug_struct("IfThenElse")
-                                .field("condition", &DebugExpression(cond.clone()))
-                                .field(
-                                    "if_case",
-                                    &ExtendedStatement::DebugStatement(*if_case.clone()),
-                                )
-                                .finish()
-                        } else {
-                            f.debug_struct("IfThenElse")
-                                .field("condition", &DebugExpression(cond.clone()))
-                                .field(
-                                    "if_case",
-                                    &ExtendedStatement::DebugStatement(*if_case.clone()),
-                                )
-                                .field(
-                                    "else_case",
-                                    &ExtendedStatement::DebugStatement(
-                                        *else_case.clone().unwrap().clone(),
-                                    ),
-                                )
-                                .finish()
-                        }
-                    }
-                    Statement::While {
-                        meta: _,
-                        cond,
-                        stmt,
-                    } => f
-                        .debug_struct("While")
-                        .field("condition", &DebugExpression(cond.clone()))
-                        .field(
-                            "statement",
-                            &ExtendedStatement::DebugStatement(*stmt.clone()),
-                        )
-                        .finish(),
-                    Statement::Return { meta: _, value } => f
-                        .debug_struct("Return")
-                        .field("value", &DebugExpression(value.clone()))
-                        .finish(),
-                    Statement::InitializationBlock {
-                        meta: _,
-                        xtype: _,
-                        initializations,
-                    } => f
-                        .debug_struct("InitializationBlock")
-                        //.field("type", xtype)
-                        .field(
-                            "initializations",
-                            &initializations
-                                .iter()
-                                .map(|arg0: &Statement| {
-                                    ExtendedStatement::DebugStatement(arg0.clone())
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                        .finish(),
-                    Statement::Declaration {
-                        meta: _,
-                        xtype: _,
-                        name,
-                        dimensions,
-                        is_constant,
-                    } => f
-                        .debug_struct("Declaration")
-                        //.field("type", xtype)
-                        .field("name", &name)
-                        .field(
-                            "dimensions",
-                            &dimensions
-                                .iter()
-                                .map(|arg0: &Expression| DebugExpression(arg0.clone()))
-                                .collect::<Vec<_>>(),
-                        )
-                        .field("is_constant", &is_constant)
-                        .finish(),
-                    Statement::Substitution {
-                        meta: _,
-                        var,
-                        access,
-                        op,
-                        rhe,
-                    } => f
-                        .debug_struct("Substitution")
-                        .field("variable", &var)
-                        .field(
-                            "access",
-                            &access
-                                .iter()
-                                .map(|arg0: &Access| DebugAccess(arg0.clone()))
-                                .collect::<Vec<_>>(),
-                        )
-                        .field("operation", &DebugAssignOp(op.clone()))
-                        .field("rhe", &DebugExpression(rhe.clone()))
-                        .finish(),
-                    Statement::MultSubstitution { lhe, op, rhe, .. } => f
-                        .debug_struct("MultSubstitution")
-                        .field("lhs_expression", &DebugExpression(lhe.clone()))
-                        .field("operation", &DebugAssignOp(op.clone()))
-                        .field("rhs_expression", &DebugExpression(rhe.clone()))
-                        .finish(),
-                    Statement::UnderscoreSubstitution { op, rhe, .. } => f
-                        .debug_struct("UnderscoreSubstitution")
-                        .field("operation", &DebugAssignOp(op.clone()))
-                        .field("rhe", &DebugExpression(rhe.clone()))
-                        .finish(),
-                    Statement::ConstraintEquality { meta: _, lhe, rhe } => f
-                        .debug_struct("ConstraintEquality")
-                        .field("lhs_expression", &DebugExpression(lhe.clone()))
-                        .field("rhs_expression", &DebugExpression(rhe.clone()))
-                        .finish(),
-                    Statement::LogCall { meta: _, args: _ } => {
-                        f.debug_struct("LogCall").finish()
-                        //f.debug_struct("LogCall").field("arguments", args).finish()
-                    }
-                    Statement::Block { meta: _, stmts } => f
-                        .debug_struct("Block")
-                        .field(
-                            "statements",
-                            &stmts
-                                .iter()
-                                .map(|arg0: &Statement| {
-                                    ExtendedStatement::DebugStatement(arg0.clone())
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                        .finish(),
-                    Statement::Assert { meta: _, arg } => f
-                        .debug_struct("Assert")
-                        .field("argument", &DebugExpression(arg.clone()))
-                        .finish(),
-                }
-            }
-            ExtendedStatement::Ret => f.debug_struct("Ret").finish(),
-        }
-    }
-}*/
 
 pub fn parse_project(input_info: &Input) -> Result<ProgramArchive, ()> {
     let initial_file = input_info.input_file().to_string();
