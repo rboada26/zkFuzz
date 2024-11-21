@@ -14,10 +14,10 @@ cargo build
 
 TCCT provides multiple verbosity levels for detailed analysis:
 
-`warn`: Outputs warnings and basic statistics about the trace and side constraints.
-`info`: Includes everything from `warn` and adds details about all possible finite states.
-`debug`: Includes everything from `info` and adds the full AST (Abstract Syntax Tree).
-`trace`: Includes everything from `debug` and outputs all intermediate trace states during execution.
+- `warn`: Outputs warnings and basic statistics about the trace and side constraints.
+- `info`: Includes everything from `warn` and adds details about all possible finite states.
+- `debug`: Includes everything from `info` and adds the full AST (Abstract Syntax Tree).
+- `trace`: Includes everything from `debug` and outputs all intermediate trace states during execution.
 
 To analyze a sample Circom circuit, use the following command:
 
