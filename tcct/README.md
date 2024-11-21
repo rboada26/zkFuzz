@@ -1,6 +1,6 @@
 # Trace-Constraint Consistency Test (TCCT)
 
-This tool is designed to extract and analyze the trace constraints ($\mathcal{T}(\mathcal{P})$) and side constraints ($\mathcal{S}(\mathcal{C})$) from ZKP circuits written in Circom.
+This tool is designed to extract and analyze the trace constraints ($`\mathcal{T}(\mathcal{P})`$) and side constraints ($`\mathcal{S}(\mathcal{C})`$) from ZKP circuits written in Circom.
 
 ## Bbuild
 
