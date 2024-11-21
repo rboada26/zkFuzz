@@ -2,7 +2,8 @@ use crate::parser_user::{
     DebugAccess, DebugExpression, DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode,
     ExtendedStatement,
 };
-use log::{debug, trace};
+use colored::Colorize;
+use log::trace;
 use num_bigint_dig::BigInt;
 use program_structure::ast::Access;
 use program_structure::ast::AssignOp;
@@ -31,16 +32,20 @@ pub fn simplify_statement(statement: &Statement) -> Statement {
                 if_false,
             } = rhe
             {
+                let mut meta_if = meta.clone();
+                meta_if.elem_id = std::usize::MAX - meta.elem_id * 2;
                 let if_stmt = Statement::Substitution {
-                    meta: meta.clone(),
+                    meta: meta_if.clone(),
                     var: var.clone(),
                     access: access.clone(),
                     op: *op, // Assuming simple assignment
                     rhe: *if_true.clone(),
                 };
 
+                let mut meta_else = meta.clone();
+                meta_else.elem_id = std::usize::MAX - (meta.elem_id * 2 + 1);
                 let else_stmt = Statement::Substitution {
-                    meta: meta.clone(),
+                    meta: meta_else.clone(),
                     var: var.clone(),
                     access: access.clone(),
                     op: *op, // Assuming simple assignment
@@ -111,23 +116,47 @@ impl fmt::Debug for SymbolicValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SymbolicValue::Constant(value) => write!(f, "{}", value),
-            SymbolicValue::Variable(name) => write!(f, "{}", name),
-            SymbolicValue::BinaryOp(lhs, op, rhs) => write!(f, "({:?} {:?} {:?})", op, lhs, rhs),
+            SymbolicValue::Variable(name) => write!(f, "{}", name.yellow()),
+            SymbolicValue::BinaryOp(lhs, op, rhs) => match &op.0 {
+                ExpressionInfixOpcode::Eq => {
+                    write!(f, "({} {:?} {:?})", format!("{:?}", op).green(), lhs, rhs)
+                }
+                ExpressionInfixOpcode::NotEq => {
+                    write!(f, "({} {:?} {:?})", format!("{:?}", op).green(), lhs, rhs)
+                }
+                _ => write!(f, "({} {:?} {:?})", format!("{:?}", op), lhs, rhs),
+            },
             SymbolicValue::Conditional(cond, if_branch, else_branch) => {
                 write!(f, "({:?} {:?} {:?})", cond, if_branch, else_branch)
             }
-            SymbolicValue::UnaryOp(op, expr) => write!(f, "({:?} {:?})", op, expr),
+            SymbolicValue::UnaryOp(op, expr) => match &op.0 {
+                ExpressionPrefixOpcode::BoolNot => {
+                    write!(f, "({} {:?})", format!("{:?}", op).red(), expr)
+                }
+                _ => write!(f, "({} {:?})", format!("{:?}", op), expr),
+            },
             _ => write!(f, "unknown symbolic value"),
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SymbolicState {
     values: HashMap<String, SymbolicValue>,
     trace_constraints: Vec<SymbolicValue>,
     side_constraints: Vec<SymbolicValue>,
     depth: usize,
+}
+
+impl fmt::Debug for SymbolicState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "SymbolicState [")?;
+        writeln!(f, "  values: {:?}", self.values)?;
+        writeln!(f, "  trace_constraints: {:?}", self.trace_constraints)?;
+        writeln!(f, "  sidec_constraints: {:?}", self.side_constraints)?;
+        writeln!(f, "  depth: {:?}", self.depth)?;
+        write!(f, "]")
+    }
 }
 
 impl SymbolicState {
@@ -245,6 +274,7 @@ impl ConstraintStatistics {
     }
 }
 
+/*
 pub fn print_constraint_statistics(constraint_stats: &ConstraintStatistics) {
     println!("Constraint Statistics:");
     println!("Total constraints: {}", constraint_stats.total_constraints);
@@ -265,7 +295,7 @@ pub fn print_constraint_statistics(constraint_stats: &ConstraintStatistics) {
         "Function call counts: {:?}",
         constraint_stats.function_call_counts
     );
-}
+}*/
 
 pub fn print_constraint_summary_statistics(constraint_stats: &ConstraintStatistics) {
     let headers = vec![
@@ -405,7 +435,7 @@ impl SymbolicExecutor {
         }
     }
 
-    fn execute_next_block(
+    fn expand_all_stack_states(
         &mut self,
         statements: &Vec<ExtendedStatement>,
         cur_bid: usize,
@@ -416,7 +446,7 @@ impl SymbolicExecutor {
         for state in &stack_states.clone() {
             self.cur_state = state.clone();
             self.cur_state.set_depth(depth);
-            self.execute(statements, cur_bid + 1);
+            self.execute(statements, cur_bid);
         }
     }
 
@@ -436,14 +466,14 @@ impl SymbolicExecutor {
                                 );
                             }
                             self.block_end_states = vec![self.cur_state.clone()];
-                            self.execute_next_block(
+                            self.expand_all_stack_states(
                                 statements,
-                                cur_bid,
+                                cur_bid + 1,
                                 self.cur_state.get_depth(),
                             );
                         }
                         Statement::Block { meta, stmts, .. } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             if cur_bid < stmts.len() {
                                 self.execute(
                                     &stmts
@@ -454,9 +484,9 @@ impl SymbolicExecutor {
                                         .collect::<Vec<_>>(),
                                     0,
                                 );
-                                self.execute_next_block(
+                                self.expand_all_stack_states(
                                     statements,
-                                    cur_bid,
+                                    cur_bid + 1,
                                     self.cur_state.get_depth(),
                                 );
                             }
@@ -468,15 +498,18 @@ impl SymbolicExecutor {
                             else_case,
                             ..
                         } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             let condition =
                                 self.evaluate_expression(&DebugExpression(cond.clone()), true);
                             self.trace_constraint_stats.update(&condition);
 
+                            // Save the current state
+                            let cur_depth = self.cur_state.get_depth();
+                            let stack_states = self.block_end_states.clone();
+
                             // Create a branch in the symbolic state
                             let mut if_state = self.cur_state.clone();
                             let mut else_state = self.cur_state.clone();
-                            let cur_depth = self.cur_state.get_depth();
 
                             if_state.push_trace_constraint(condition.clone());
                             if_state.set_depth(cur_depth + 1);
@@ -485,9 +518,11 @@ impl SymbolicExecutor {
                                 &vec![ExtendedStatement::DebugStatement(*if_case.clone())],
                                 0,
                             );
-                            self.execute_next_block(statements, cur_bid, cur_depth);
+                            self.expand_all_stack_states(statements, cur_bid + 1, cur_depth);
 
                             if let Some(else_stmt) = else_case {
+                                let mut stack_states_if_true = self.block_end_states.clone();
+                                self.block_end_states = stack_states;
                                 else_state.push_trace_constraint(SymbolicValue::UnaryOp(
                                     DebugExpressionPrefixOpcode(ExpressionPrefixOpcode::BoolNot),
                                     Box::new(condition),
@@ -498,13 +533,14 @@ impl SymbolicExecutor {
                                     &vec![ExtendedStatement::DebugStatement(*else_stmt.clone())],
                                     0,
                                 );
-                                self.execute_next_block(statements, cur_bid, cur_depth);
+                                self.expand_all_stack_states(statements, cur_bid + 1, cur_depth);
+                                self.block_end_states.append(&mut stack_states_if_true);
                             }
                         }
                         Statement::While {
                             meta, cond, stmt, ..
                         } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             // Symbolic execution of loops is complex. This is a simplified approach.
                             let condition =
                                 self.evaluate_expression(&DebugExpression(cond.clone()), true);
@@ -515,15 +551,15 @@ impl SymbolicExecutor {
                                 &vec![ExtendedStatement::DebugStatement(*stmt.clone())],
                                 0,
                             );
-                            self.execute_next_block(
+                            self.expand_all_stack_states(
                                 statements,
-                                cur_bid,
+                                cur_bid + 1,
                                 self.cur_state.get_depth(),
                             );
                             // Note: This doesn't handle loop invariants or fixed-point computation
                         }
                         Statement::Return { meta, value, .. } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             let return_value =
                                 self.evaluate_expression(&DebugExpression(value.clone()), true);
                             // Handle return value (e.g., store in a special "return" variable)
@@ -558,7 +594,7 @@ impl SymbolicExecutor {
                             op,
                             rhe,
                         } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             let original_value =
                                 self.evaluate_expression(&DebugExpression(rhe.clone()), false);
                             let value =
@@ -601,7 +637,7 @@ impl SymbolicExecutor {
                         Statement::MultSubstitution {
                             meta, lhe, op, rhe, ..
                         } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             let simple_lhs =
                                 self.evaluate_expression(&DebugExpression(lhe.clone()), false);
                             let simple_rhs =
@@ -630,7 +666,7 @@ impl SymbolicExecutor {
                             self.execute(statements, cur_bid + 1);
                         }
                         Statement::ConstraintEquality { meta, lhe, rhe } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             let original_lhs =
                                 self.evaluate_expression(&DebugExpression(lhe.clone()), false);
                             let original_rhs =
@@ -657,7 +693,7 @@ impl SymbolicExecutor {
                             self.execute(statements, cur_bid + 1);
                         }
                         Statement::Assert { meta, arg, .. } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             let condition =
                                 self.evaluate_expression(&DebugExpression(arg.clone()), true);
                             self.cur_state.push_trace_constraint(condition.clone());
@@ -670,11 +706,11 @@ impl SymbolicExecutor {
                             rhe: _,
                             ..
                         } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             // Underscore substitution doesn't affect the symbolic state
                         }
                         Statement::LogCall { meta, args: _, .. } => {
-                            trace!("(sid={}) {:?}", meta.elem_id, self.cur_state);
+                            trace!("(elem_id={}) {:?}", meta.elem_id, self.cur_state);
                             // Logging doesn't affect the symbolic state
                         }
                     }
