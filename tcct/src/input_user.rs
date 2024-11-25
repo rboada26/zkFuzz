@@ -34,7 +34,11 @@ pub struct Input {
     pub no_rounds: usize,
     pub flag_verbose: bool,
         */
+    pub flag_printout_ast: bool,
+    pub flag_printout_stats: bool,
+    pub flag_symbolic_template_params: bool,
     pub prime: String,
+    pub debug_prime: String,
     pub link_libraries : Vec<PathBuf>
 }
 
@@ -110,7 +114,11 @@ impl Input {
             flag_old_heuristics: input_processing::get_flag_old_heuristics(&matches),
             flag_verbose: input_processing::get_flag_verbose(&matches), 
             */
+            flag_printout_ast: input_processing::get_ast(&matches),
+            flag_printout_stats: input_processing::get_stats(&matches),
+            flag_symbolic_template_params: input_processing::get_symbolic_template_params(&matches),
             prime: input_processing::get_prime(&matches)?,
+            debug_prime: input_processing::get_debug_prime(&matches)?,
             link_libraries
         })
     }
@@ -229,6 +237,9 @@ impl Input {
     pub fn prime(&self) -> String{
         self.prime.clone()
     }
+    pub fn debug_prime(&self) -> String{
+        self.debug_prime.clone()
+    }
 }
 mod input_processing {
     use ansi_term::Colour;
@@ -309,6 +320,19 @@ mod input_processing {
     pub fn get_c(matches: &ArgMatches) -> bool {
         matches.is_present("print_c")
     }
+
+    pub fn get_ast(matches: &ArgMatches) -> bool {
+        matches.is_present("print_ast")
+    }
+
+    pub fn get_stats(matches: &ArgMatches) -> bool {
+        matches.is_present("print_stats")
+    }
+
+    pub fn get_symbolic_template_params(matches: &ArgMatches) -> bool {
+        matches.is_present("symbolic_template_params")
+    }
+
     /* 
     pub fn get_main_inputs_log(matches: &ArgMatches) -> bool {
         matches.is_present("main_inputs_log")
@@ -358,6 +382,13 @@ mod input_processing {
                }
                
             false => Ok(String::from("bn128")),
+        }
+    }
+
+    pub fn get_debug_prime(matches: &ArgMatches) -> Result<String, ()> {
+        match matches.is_present("debug_prime") {
+            true => Ok(String::from(matches.value_of("debug_prime").unwrap())),
+            false => Ok(String::from("21888242871839275222246405745257275088548364400416034343698204186575808495617"))
         }
     }
 
@@ -486,6 +517,27 @@ mod input_processing {
                     .takes_value(false)
                     .display_order(150)
                     .help("Compiles the circuit to c"),
+            )
+            .arg(
+                Arg::with_name("print_ast")
+                    .long("print_ast")
+                    .takes_value(false)
+                    .display_order(150)
+                    .help("Prints AST"),
+            )
+            .arg(
+                Arg::with_name("print_stats")
+                    .long("print_stats")
+                    .takes_value(false)
+                    .display_order(150)
+                    .help("Prints the stats of constraints"),
+            )
+            .arg(
+                Arg::with_name("symbolic_template_params")
+                    .long("symbolic_template_params")
+                    .takes_value(false)
+                    .display_order(150)
+                    .help("Treats the template parameters of the main template as symbolic values"),
             )
             .arg(
                 Arg::with_name("parallel_simplification")
