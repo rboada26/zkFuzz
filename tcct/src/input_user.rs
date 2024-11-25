@@ -37,6 +37,7 @@ pub struct Input {
     pub flag_printout_ast: bool,
     pub flag_printout_stats: bool,
     pub flag_symbolic_template_params: bool,
+    pub flag_propagate_substitution: bool,
     pub prime: String,
     pub debug_prime: String,
     pub link_libraries : Vec<PathBuf>
@@ -117,6 +118,7 @@ impl Input {
             flag_printout_ast: input_processing::get_ast(&matches),
             flag_printout_stats: input_processing::get_stats(&matches),
             flag_symbolic_template_params: input_processing::get_symbolic_template_params(&matches),
+            flag_propagate_substitution: input_processing::get_propagate_substitution(&matches),
             prime: input_processing::get_prime(&matches)?,
             debug_prime: input_processing::get_debug_prime(&matches)?,
             link_libraries
@@ -333,6 +335,10 @@ mod input_processing {
         matches.is_present("symbolic_template_params")
     }
 
+    pub fn get_propagate_substitution(matches: &ArgMatches) -> bool {
+        matches.is_present("propagate_substitution")
+    }
+
     /* 
     pub fn get_main_inputs_log(matches: &ArgMatches) -> bool {
         matches.is_present("main_inputs_log")
@@ -519,27 +525,6 @@ mod input_processing {
                     .help("Compiles the circuit to c"),
             )
             .arg(
-                Arg::with_name("print_ast")
-                    .long("print_ast")
-                    .takes_value(false)
-                    .display_order(150)
-                    .help("Prints AST"),
-            )
-            .arg(
-                Arg::with_name("print_stats")
-                    .long("print_stats")
-                    .takes_value(false)
-                    .display_order(150)
-                    .help("Prints the stats of constraints"),
-            )
-            .arg(
-                Arg::with_name("symbolic_template_params")
-                    .long("symbolic_template_params")
-                    .takes_value(false)
-                    .display_order(150)
-                    .help("Treats the template parameters of the main template as symbolic values"),
-            )
-            .arg(
                 Arg::with_name("parallel_simplification")
                     .long("parallel")
                     .takes_value(false)
@@ -585,6 +570,42 @@ mod input_processing {
                     .default_value("bn128")
                     .display_order(300)
                     .help("To choose the prime number to use to generate the circuit. Receives the name of the curve (bn128, bls12381, goldilocks, grumpkin, pallas, vesta, secq256r1)"),
+            )
+            .arg(
+                Arg::with_name("print_ast")
+                    .long("print_ast")
+                    .takes_value(false)
+                    .display_order(1000)
+                    .help("(TCCT) Prints AST"),
+            )
+            .arg(
+                Arg::with_name("print_stats")
+                    .long("print_stats")
+                    .takes_value(false)
+                    .display_order(1010)
+                    .help("(TCCT) Prints the stats of constraints"),
+            )
+            .arg(
+                Arg::with_name("symbolic_template_params")
+                    .long("symbolic_template_params")
+                    .takes_value(false)
+                    .display_order(1020)
+                    .help("(TCCT) Treats the template parameters of the main template as symbolic values"),
+            )
+            .arg(
+                Arg::with_name("propagate_substitution")
+                .long("propagate_substitution")
+                .takes_value(false)
+                .display_order(1030)
+                .help("(TCCT) Propagate variable substitution as much as possible"),
+            )
+            .arg (
+                Arg::with_name("debug_prime")
+                    .long("debug_prime")
+                    .takes_value(true)
+                    .default_value("21888242871839275222246405745257275088548364400416034343698204186575808495617")
+                    .display_order(1050)
+                    .help("(TCCT) Prime number for TCCT debugging"),
             )
             .get_matches()
     }
