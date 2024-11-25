@@ -1,6 +1,7 @@
 //mod execution_user;
 mod input_user;
 mod parser_user;
+mod solver;
 mod stats;
 mod symbolic_execution;
 mod type_analysis_user;
@@ -9,7 +10,7 @@ mod utils;
 use ansi_term::Colour;
 use env_logger;
 use input_user::Input;
-use log::{info, warn};
+use log::{error, info, warn};
 use num_bigint_dig::BigInt;
 use stats::print_constraint_summary_statistics_pretty;
 use std::env;
@@ -18,6 +19,7 @@ use std::time;
 
 use parser_user::ExtendedStatement;
 use program_structure::ast::Expression;
+use solver::brute_force_search;
 use symbolic_execution::{simplify_statement, ConstraintStatistics, SymbolicExecutor};
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -107,12 +109,60 @@ fn start() -> Result<(), ()> {
             for s in &sexe.final_states {
                 info!("Final State: {:?}", s);
             }
+            println!("===========================================================");
+
+            let mut is_safe = true;
+            if user_input.flag_search_counter_example {
+                println!("{}", Colour::Green.paint("🩺 Scanning TCCT Instances..."));
+                let mut sub_ts = ConstraintStatistics::new();
+                let mut sub_ss = ConstraintStatistics::new();
+                let mut sub_sexe = SymbolicExecutor::new(
+                    user_input.flag_propagate_substitution,
+                    BigInt::from_str(&user_input.debug_prime()).unwrap(),
+                    &mut sub_ts,
+                    &mut sub_ss,
+                );
+                for (k, v) in program_archive.templates.clone().into_iter() {
+                    let body = simplify_statement(&v.get_body().clone());
+                    sub_sexe.register_library(k.clone(), body.clone(), v.get_name_of_params());
+                }
+                for (k, v) in program_archive.functions.clone().into_iter() {
+                    let body = simplify_statement(&v.get_body().clone());
+                    sub_sexe.register_function(k.clone(), body.clone(), v.get_name_of_params());
+                }
+                let mut main_template_id = "";
+                match &program_archive.initial_template_call {
+                    Expression::Call { id, args, .. } => {
+                        main_template_id = id;
+                        let template = program_archive.templates[id].clone();
+                        sub_sexe.cur_state.set_owner("main".to_string());
+                        if !user_input.flag_symbolic_template_params {
+                            sub_sexe.feed_arguments(template.get_name_of_params(), args);
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+                for s in &sexe.final_states {
+                    let counterexample = brute_force_search(
+                        BigInt::from_str(&user_input.debug_prime()).unwrap(),
+                        main_template_id.to_string(),
+                        &mut sub_sexe,
+                        &s.trace_constraints.clone(),
+                        &s.side_constraints.clone(),
+                    );
+                    if counterexample.is_some() {
+                        is_safe = false;
+                        error!("{:?}", counterexample.unwrap());
+                    }
+                }
+            }
 
             println!(
                 "{}",
                 Colour::Green.paint("======================= TCCT Report =======================")
             );
             println!("📊 Execution Summary:");
+            println!("  - Prime Number        : {}", user_input.debug_prime());
             println!("  - Total Paths Explored: {}", sexe.final_states.len());
             println!(
                 "  - Compression Rate    : {:.2}% ({}/{})",
@@ -121,6 +171,14 @@ fn start() -> Result<(), ()> {
                     * 100 as f64,
                 sexe.side_constraint_stats.total_constraints,
                 sexe.trace_constraint_stats.total_constraints
+            );
+            println!(
+                "  - Verification        : {}",
+                if is_safe {
+                    Colour::Green.paint("🆗 No Counter Example Found")
+                } else {
+                    Colour::Red.paint("💥 NOT SAFE 💥")
+                }
             );
             println!("  - Execution Time      : {:?}", start_time.elapsed());
 
