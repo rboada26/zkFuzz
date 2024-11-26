@@ -29,20 +29,53 @@ ARGS:
     <input>    Path to a circuit with a main component [default: ./circuit.circom]
 ```
 
-This tool provides multiple verbosity levels for detailed analysis:
+**Example command:**
+
+```bash
+./target/debug/tcct ../sample/iszero_vuln.circom --debug_prime 3 --search_counter_example
+```
+
+**Example output:**
+
+```bash
+🧩 Parsing Templates...
+⚙️ Parsing Function...
+🛒 Gathering Trace/Side Constraints...
+===========================================================
+===========================================================
+🩺 Scanning TCCT Instances...
+   🚨 Counter Example:
+      🔥 UnderConstrained 🔥
+      🔍 Assignment Details:
+           ➡️ main.out = 1
+           ➡️ main.inv = 0
+           ➡️ main.in = 1
+
+======================= TCCT Report =======================
+📊 Execution Summary:
+  - Prime Number        : 3
+  - Total Paths Explored: 2
+  - Compression Rate    : 50.00% (4/8)
+  - Verification        : 💥 NOT SAFE 💥
+  - Execution Time      : 3.5248ms
+===========================================================
+Everything went okay
+```
+
+This tool also provides multiple verbosity levels for detailed analysis:
 
 - `warn`: Outputs warnings and basic statistics about the trace and side constraints.
 - `info`: Includes everything from `warn` and adds details about all possible finite states.
 - `debug`: Includes everything from `info` and adds the full AST (Abstract Syntax Tree).
 - `trace`: Includes everything from `debug` and outputs all intermediate trace states during execution.
 
-To analyze a sample Circom circuit, use the following command:
+**Example Command with Verbosity:**
 
 ```bash
 RUST_LOG=trace ./target/debug/tcct ../sample/lessthan3.circom --print_ast --print_stats
 ```
 
-Example output:
+**Example output:**
 
 <div style="display: flex; align-items: flex-start; justify-content: space-around;">
   <img src="img/ast.png" alt="AST" style="width: 20%; margin-right: 5px;">
