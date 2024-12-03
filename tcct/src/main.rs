@@ -12,15 +12,16 @@ use env_logger;
 use input_user::Input;
 use log::{error, info, warn};
 use num_bigint_dig::BigInt;
-use stats::print_constraint_summary_statistics_pretty;
+use stats::{print_constraint_summary_statistics_pretty, ConstraintStatistics};
+use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
 use std::time;
 
-use parser_user::ExtendedStatement;
+use parser_user::DebugStatement;
 use program_structure::ast::Expression;
 use solver::brute_force_search;
-use symbolic_execution::{simplify_statement, ConstraintStatistics, SymbolicExecutor};
+use symbolic_execution::{register_library, simplify_statement, SymbolicExecutor};
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const RESET: &str = "\x1b[0m";
@@ -46,28 +47,32 @@ fn start() -> Result<(), ()> {
 
     env_logger::init();
 
-    let mut ts = ConstraintStatistics::new();
-    let mut ss = ConstraintStatistics::new();
-    let mut sexe = SymbolicExecutor::new(
-        user_input.flag_propagate_substitution,
-        BigInt::from_str(&user_input.debug_prime()).unwrap(),
-        &mut ts,
-        &mut ss,
-    );
+    let mut template_library = HashMap::new();
 
     println!("{}", Colour::Green.paint("🧩 Parsing Templates..."));
     for (k, v) in program_archive.templates.clone().into_iter() {
         let body = simplify_statement(&v.get_body().clone());
-        sexe.register_library(k.clone(), body.clone(), v.get_name_of_params());
+        register_library(
+            &mut template_library,
+            k.clone(),
+            &body.clone(),
+            v.get_name_of_params(),
+        );
 
         if user_input.flag_printout_ast {
             println!(
                 "{}{} {}{}",
                 BACK_GRAY_SCRIPT_BLACK, "🌳 AST Tree for", k, RESET
             );
-            println!("{:?}", ExtendedStatement::DebugStatement(body.clone()));
+            println!("{:?}", DebugStatement::from(body.clone()));
         }
     }
+
+    let mut sexe = SymbolicExecutor::new(
+        Box::new(template_library.clone()),
+        user_input.flag_propagate_substitution,
+        BigInt::from_str(&user_input.debug_prime()).unwrap(),
+    );
 
     println!("{}", Colour::Green.paint("⚙️ Parsing Function..."));
     for (k, v) in program_archive.functions.clone().into_iter() {
@@ -79,7 +84,7 @@ fn start() -> Result<(), ()> {
                 "{}{} {}{}",
                 BACK_GRAY_SCRIPT_BLACK, "🌴 AST Tree for", k, RESET
             );
-            println!("{:?}", ExtendedStatement::DebugStatement(body.clone()));
+            println!("{:?}", DebugStatement::from(body.clone()));
         }
     }
 
@@ -94,62 +99,78 @@ fn start() -> Result<(), ()> {
                 Colour::Green.paint("🛒 Gathering Trace/Side Constraints...")
             );
             sexe.cur_state.set_owner("main".to_string());
+            sexe.cur_state.set_template_id(id.to_string());
             if !user_input.flag_symbolic_template_params {
                 sexe.feed_arguments(template.get_name_of_params(), args);
             }
-            sexe.execute(
-                &vec![
-                    ExtendedStatement::DebugStatement(body),
-                    ExtendedStatement::Ret,
-                ],
-                0,
-            );
+            sexe.execute(&vec![DebugStatement::from(body), DebugStatement::Ret], 0);
 
             println!("===========================================================");
+            let mut ts = ConstraintStatistics::new();
+            let mut ss = ConstraintStatistics::new();
             for s in &sexe.final_states {
+                for c in &s.trace_constraints {
+                    ts.update(c);
+                }
+                for c in &s.side_constraints {
+                    ss.update(c);
+                }
                 info!("Final State: {:?}", s);
             }
             println!("===========================================================");
 
             let mut is_safe = true;
-            if user_input.flag_search_counter_example {
+            if user_input.search_mode != "none" {
                 println!("{}", Colour::Green.paint("🩺 Scanning TCCT Instances..."));
-                let mut sub_ts = ConstraintStatistics::new();
-                let mut sub_ss = ConstraintStatistics::new();
-                let mut sub_sexe = SymbolicExecutor::new(
-                    user_input.flag_propagate_substitution,
-                    BigInt::from_str(&user_input.debug_prime()).unwrap(),
-                    &mut sub_ts,
-                    &mut sub_ss,
-                );
-                for (k, v) in program_archive.templates.clone().into_iter() {
-                    let body = simplify_statement(&v.get_body().clone());
-                    sub_sexe.register_library(k.clone(), body.clone(), v.get_name_of_params());
-                }
-                for (k, v) in program_archive.functions.clone().into_iter() {
-                    let body = simplify_statement(&v.get_body().clone());
-                    sub_sexe.register_function(k.clone(), body.clone(), v.get_name_of_params());
-                }
+                let mut sub_sexe = sexe.clone();
+                sub_sexe.clear();
+
                 let mut main_template_id = "";
+                let mut template_param_names = Vec::new();
+                let mut template_param_values = Vec::new();
                 match &program_archive.initial_template_call {
                     Expression::Call { id, args, .. } => {
                         main_template_id = id;
                         let template = program_archive.templates[id].clone();
                         sub_sexe.cur_state.set_owner("main".to_string());
+                        sub_sexe
+                            .cur_state
+                            .set_template_id(main_template_id.to_string());
                         if !user_input.flag_symbolic_template_params {
+                            template_param_names = template.get_name_of_params().clone();
+                            template_param_values = args.clone();
                             sub_sexe.feed_arguments(template.get_name_of_params(), args);
                         }
                     }
                     _ => unimplemented!(),
                 }
                 for s in &sexe.final_states {
-                    let counterexample = brute_force_search(
-                        BigInt::from_str(&user_input.debug_prime()).unwrap(),
-                        main_template_id.to_string(),
-                        &mut sub_sexe,
-                        &s.trace_constraints.clone(),
-                        &s.side_constraints.clone(),
-                    );
+                    let counterexample = match &*user_input.search_mode {
+                        "quick" => brute_force_search(
+                            BigInt::from_str(&user_input.debug_prime()).unwrap(),
+                            main_template_id.to_string(),
+                            &mut sub_sexe,
+                            &s.trace_constraints.clone(),
+                            &s.side_constraints.clone(),
+                            true,
+                            &template_param_names,
+                            &template_param_values,
+                        ),
+                        "full" => brute_force_search(
+                            BigInt::from_str(&user_input.debug_prime()).unwrap(),
+                            main_template_id.to_string(),
+                            &mut sub_sexe,
+                            &s.trace_constraints.clone(),
+                            &s.side_constraints.clone(),
+                            false,
+                            &template_param_names,
+                            &template_param_values,
+                        ),
+                        _ => panic!(
+                            "search_mode={} is not supported",
+                            user_input.search_mode.to_string()
+                        ),
+                    };
                     if counterexample.is_some() {
                         is_safe = false;
                         println!("{:?}", counterexample.unwrap());
@@ -166,11 +187,9 @@ fn start() -> Result<(), ()> {
             println!("  - Total Paths Explored: {}", sexe.final_states.len());
             println!(
                 "  - Compression Rate    : {:.2}% ({}/{})",
-                (sexe.side_constraint_stats.total_constraints as f64
-                    / sexe.trace_constraint_stats.total_constraints as f64)
-                    * 100 as f64,
-                sexe.side_constraint_stats.total_constraints,
-                sexe.trace_constraint_stats.total_constraints
+                (ss.total_constraints as f64 / ts.total_constraints as f64) * 100 as f64,
+                ss.total_constraints,
+                ts.total_constraints
             );
             println!(
                 "  - Verification        : {}",
@@ -186,11 +205,11 @@ fn start() -> Result<(), ()> {
                 println!(
                     "--------------------------------------------\n🪶 Stats of Trace Constraint"
                 );
-                print_constraint_summary_statistics_pretty(&sexe.trace_constraint_stats);
+                print_constraint_summary_statistics_pretty(&ts);
                 println!(
-                    "--------------------------------------------\n⛓️ Stats of Side Constraint*"
+                    "--------------------------------------------\n⛓️ Stats of Side Constraint"
                 );
-                print_constraint_summary_statistics_pretty(&sexe.side_constraint_stats);
+                print_constraint_summary_statistics_pretty(&ss);
             }
             println!("===========================================================");
         }

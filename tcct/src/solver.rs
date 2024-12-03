@@ -1,11 +1,17 @@
 use colored::Colorize;
 use num_bigint_dig::BigInt;
 use num_traits::cast::ToPrimitive;
+use num_traits::Pow;
 use num_traits::Signed;
 use num_traits::{One, Zero};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::io;
+use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
+use program_structure::ast::Expression;
 use program_structure::ast::ExpressionInfixOpcode;
 use program_structure::ast::ExpressionPrefixOpcode;
 
@@ -95,8 +101,11 @@ pub fn brute_force_search(
     prime: BigInt,
     id: String,
     sexe: &mut SymbolicExecutor,
-    trace_constraints: &Vec<SymbolicValue>,
-    side_constraints: &Vec<SymbolicValue>,
+    trace_constraints: &Vec<Box<SymbolicValue>>,
+    side_constraints: &Vec<Box<SymbolicValue>>,
+    quick_mode: bool,
+    template_param_names: &Vec<String>,
+    template_param_values: &Vec<Expression>,
 ) -> Option<CounterExample> {
     let mut trace_variables = extract_variables(trace_constraints);
     let mut side_variables = extract_variables(side_constraints);
@@ -108,18 +117,32 @@ pub fn brute_force_search(
 
     let mut assignment = HashMap::new();
 
+    let current_iteration = Arc::new(AtomicUsize::new(0));
+    let progress_interval = 10000; // Update progress every 1000 iterations
+
     fn search(
-        prime: BigInt,
-        id: String,
+        prime: &BigInt,
+        id: &String,
         sexe: &mut SymbolicExecutor,
         index: usize,
         variables: &[String],
         assignment: &mut HashMap<String, BigInt>,
-        trace_constraints: &[SymbolicValue],
-        side_constraints: &[SymbolicValue],
+        trace_constraints: &[Box<SymbolicValue>],
+        side_constraints: &[Box<SymbolicValue>],
+        current_iteration: &Arc<AtomicUsize>,
+        progress_interval: usize,
+        quick_mode: bool,
+        template_param_names: &Vec<String>,
+        template_param_values: &Vec<Expression>,
     ) -> VerificationResult {
         if index == variables.len() {
-            let is_satisfy_tc = evaluate_constraints(prime.clone(), trace_constraints, assignment);
+            let iter = current_iteration.fetch_add(1, Ordering::SeqCst);
+            if iter % progress_interval == 0 {
+                print!("\rProgress: {} / {}^{}", iter, prime, variables.len());
+                io::stdout().flush().unwrap();
+            }
+
+            let is_satisfy_tc = evaluate_constraints(prime, trace_constraints, assignment);
             let is_satisfy_sc = evaluate_constraints(prime, side_constraints, assignment);
 
             if is_satisfy_tc && !is_satisfy_sc {
@@ -127,25 +150,18 @@ pub fn brute_force_search(
             } else if !is_satisfy_tc && is_satisfy_sc {
                 sexe.clear();
                 sexe.cur_state.set_owner("main".to_string());
-                for arg in &sexe.template_library[&id].inputs {
-                    let vname = format!("{}.{}", sexe.cur_state.get_owner(), arg.to_string());
-                    sexe.cur_state.set_symval(
-                        vname.clone(),
-                        SymbolicValue::ConstantInt(assignment[&vname].clone()),
-                    );
-                }
-
-                sexe.skip_initialization_blocks = true;
+                sexe.keep_track_unrolled_offset = false;
                 sexe.off_trace = true;
-                sexe.execute(&sexe.template_library[&id].body.clone(), 0);
+                sexe.feed_arguments(template_param_names, template_param_values);
+                sexe.concrete_execute(id, assignment, true);
 
                 let mut flag = false;
                 if sexe.final_states.len() > 0 {
-                    for n in &sexe.template_library[&id].outputs {
-                        let vname = format!("{}.{}", sexe.cur_state.get_owner(), n.to_string());
-                        if let SymbolicValue::ConstantInt(v) = &sexe.final_states[0].values[&vname]
-                        {
-                            if *v != assignment[&vname] {
+                    for vname in &sexe.template_library[id].unrolled_outputs {
+                        //let vname = format!("{}.{}", sexe.cur_state.get_owner(), n.to_string());
+                        let unboxed_value = sexe.final_states[0].values[&vname.clone()].clone();
+                        if let SymbolicValue::ConstantInt(v) = *unboxed_value {
+                            if v != assignment[&vname.clone()] {
                                 flag = true;
                                 break;
                             }
@@ -164,38 +180,88 @@ pub fn brute_force_search(
         }
 
         let var = &variables[index];
-        let mut value = BigInt::zero();
-        while value < prime {
-            assignment.insert(var.clone(), value.clone());
-            let result = search(
-                prime.clone(),
-                id.clone(),
-                sexe,
-                index + 1,
-                variables,
-                assignment,
-                trace_constraints,
-                side_constraints,
-            );
-            if is_vulnerable(&result) {
-                return result;
+        if quick_mode {
+            let candidates = vec![BigInt::zero(), BigInt::one(), -1 * BigInt::one()];
+            for c in candidates.into_iter() {
+                assignment.insert(var.clone(), c.clone());
+                let result = search(
+                    prime,
+                    id,
+                    sexe,
+                    index + 1,
+                    variables,
+                    assignment,
+                    trace_constraints,
+                    side_constraints,
+                    current_iteration,
+                    progress_interval,
+                    quick_mode,
+                    template_param_names,
+                    template_param_values,
+                );
+                if is_vulnerable(&result) {
+                    return result;
+                }
+                assignment.remove(var);
             }
-            assignment.remove(var);
-            value += BigInt::one();
+        } else {
+            let mut value = BigInt::zero();
+            while value < *prime {
+                assignment.insert(var.clone(), value.clone());
+                let result = search(
+                    prime,
+                    id,
+                    sexe,
+                    index + 1,
+                    variables,
+                    assignment,
+                    trace_constraints,
+                    side_constraints,
+                    current_iteration,
+                    progress_interval,
+                    quick_mode,
+                    template_param_names,
+                    template_param_values,
+                );
+                if is_vulnerable(&result) {
+                    return result;
+                }
+                assignment.remove(var);
+                value += BigInt::one();
+            }
         }
         VerificationResult::WellConstrained
     }
 
     let flag = search(
-        prime.clone(),
-        id,
+        &prime,
+        &id,
         sexe,
         0,
         &variables,
         &mut assignment,
         &trace_constraints,
         &side_constraints,
+        &current_iteration,
+        progress_interval,
+        quick_mode,
+        template_param_names,
+        template_param_values,
     );
+
+    print!(
+        "\rProgress: {} / {}^{}",
+        current_iteration.load(Ordering::SeqCst),
+        prime,
+        variables.len()
+    );
+    io::stdout().flush().unwrap();
+
+    println!(
+        "\nSearch completed. Total iterations: {}",
+        current_iteration.load(Ordering::SeqCst)
+    );
+
     if is_vulnerable(&flag) {
         Some(CounterExample {
             flag: flag,
@@ -213,7 +279,7 @@ pub fn brute_force_search(
 ///
 /// # Returns
 /// A vector of unique variable names referenced in the constraints.
-fn extract_variables(constraints: &[SymbolicValue]) -> Vec<String> {
+fn extract_variables(constraints: &[Box<SymbolicValue>]) -> Vec<String> {
     let mut variables = Vec::new();
     for constraint in constraints {
         extract_variables_from_symbolic_value(constraint, &mut variables);
@@ -230,29 +296,29 @@ fn extract_variables(constraints: &[SymbolicValue]) -> Vec<String> {
 /// - `variables`: A mutable reference to a vector where variable names will be stored.
 fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut Vec<String>) {
     match value {
-        SymbolicValue::Variable(name) => variables.push(name.clone()),
+        SymbolicValue::Variable(name, _) => variables.push(name.clone()),
         SymbolicValue::BinaryOp(lhs, _, rhs) => {
-            extract_variables_from_symbolic_value(lhs, variables);
-            extract_variables_from_symbolic_value(rhs, variables);
+            extract_variables_from_symbolic_value(&lhs, variables);
+            extract_variables_from_symbolic_value(&rhs, variables);
         }
         SymbolicValue::Conditional(cond, if_true, if_false) => {
-            extract_variables_from_symbolic_value(cond, variables);
-            extract_variables_from_symbolic_value(if_true, variables);
-            extract_variables_from_symbolic_value(if_false, variables);
+            extract_variables_from_symbolic_value(&cond, variables);
+            extract_variables_from_symbolic_value(&if_true, variables);
+            extract_variables_from_symbolic_value(&if_false, variables);
         }
-        SymbolicValue::UnaryOp(_, expr) => extract_variables_from_symbolic_value(expr, variables),
+        SymbolicValue::UnaryOp(_, expr) => extract_variables_from_symbolic_value(&expr, variables),
         SymbolicValue::Array(elements) | SymbolicValue::Tuple(elements) => {
             for elem in elements {
-                extract_variables_from_symbolic_value(elem, variables);
+                extract_variables_from_symbolic_value(&Box::new(elem), variables);
             }
         }
         SymbolicValue::UniformArray(value, size) => {
-            extract_variables_from_symbolic_value(value, variables);
-            extract_variables_from_symbolic_value(size, variables);
+            extract_variables_from_symbolic_value(&value, variables);
+            extract_variables_from_symbolic_value(&size, variables);
         }
         SymbolicValue::Call(_, args) => {
             for arg in args {
-                extract_variables_from_symbolic_value(arg, variables);
+                extract_variables_from_symbolic_value(&Box::new(arg), variables);
             }
         }
         _ => {}
@@ -260,12 +326,12 @@ fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut 
 }
 
 fn evaluate_constraints(
-    prime: BigInt,
-    constraints: &[SymbolicValue],
+    prime: &BigInt,
+    constraints: &[Box<SymbolicValue>],
     assignment: &HashMap<String, BigInt>,
 ) -> bool {
     constraints.iter().all(|constraint| {
-        let sv = evaluate_symbolic_value(prime.clone(), constraint, assignment);
+        let sv = evaluate_symbolic_value(prime, constraint, assignment);
         match sv {
             SymbolicValue::ConstantBool(b) => b,
             _ => panic!("Non-bool output value is detected when evaluating a constraint"),
@@ -273,48 +339,63 @@ fn evaluate_constraints(
     })
 }
 
+fn count_satisfied_constraints(
+    prime: &BigInt,
+    constraints: &[Box<SymbolicValue>],
+    assignment: &HashMap<String, BigInt>,
+) -> usize {
+    constraints
+        .iter()
+        .filter(|constraint| {
+            let sv = evaluate_symbolic_value(prime, constraint, assignment);
+            match sv {
+                SymbolicValue::ConstantBool(b) => b,
+                _ => panic!("Non-bool output value is detected when evaluating a constraint"),
+            }
+        })
+        .count()
+}
+
 fn evaluate_symbolic_value(
-    prime: BigInt,
+    prime: &BigInt,
     value: &SymbolicValue,
     assignment: &HashMap<String, BigInt>,
 ) -> SymbolicValue {
     match value {
         SymbolicValue::ConstantBool(b) => value.clone(),
         SymbolicValue::ConstantInt(v) => value.clone(),
-        SymbolicValue::Variable(name) => {
+        SymbolicValue::Variable(name, _) => {
             SymbolicValue::ConstantInt(assignment.get(name).unwrap().clone())
         }
         SymbolicValue::BinaryOp(lhs, op, rhs) => {
-            let lhs_val = evaluate_symbolic_value(prime.clone(), lhs, assignment);
-            let rhs_val = evaluate_symbolic_value(prime.clone(), rhs, assignment);
+            let lhs_val = evaluate_symbolic_value(prime, lhs, assignment);
+            let rhs_val = evaluate_symbolic_value(prime, rhs, assignment);
             match (&lhs_val, &rhs_val) {
                 (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => match op.0 {
-                    ExpressionInfixOpcode::Add => {
-                        SymbolicValue::ConstantInt((lv + rv) % prime.clone())
-                    }
-                    ExpressionInfixOpcode::Sub => {
-                        SymbolicValue::ConstantInt((lv - rv) % prime.clone())
-                    }
-                    ExpressionInfixOpcode::Mul => {
-                        SymbolicValue::ConstantInt((lv * rv) % prime.clone())
-                    }
+                    ExpressionInfixOpcode::Add => SymbolicValue::ConstantInt((lv + rv) % prime),
+                    ExpressionInfixOpcode::Sub => SymbolicValue::ConstantInt((lv - rv) % prime),
+                    ExpressionInfixOpcode::Mul => SymbolicValue::ConstantInt((lv * rv) % prime),
                     ExpressionInfixOpcode::Div => {
-                        let mut r = prime.clone();
-                        let mut new_r = rv.clone();
-                        if r.is_negative() {
-                            r += prime.clone();
-                        }
-                        if new_r.is_negative() {
-                            new_r += prime.clone();
-                        }
+                        if rv.is_zero() {
+                            SymbolicValue::ConstantInt(BigInt::zero())
+                        } else {
+                            let mut r = prime.clone();
+                            let mut new_r = rv.clone();
+                            if r.is_negative() {
+                                r += prime;
+                            }
+                            if new_r.is_negative() {
+                                new_r += prime;
+                            }
 
-                        let (_, _, mut rv_inv) = extended_euclidean(r, new_r);
-                        rv_inv %= prime.clone();
-                        if rv_inv.is_negative() {
-                            rv_inv += prime.clone();
-                        }
+                            let (_, _, mut rv_inv) = extended_euclidean(r, new_r);
+                            rv_inv %= prime;
+                            if rv_inv.is_negative() {
+                                rv_inv += prime;
+                            }
 
-                        SymbolicValue::ConstantInt((lv * rv_inv) % prime.clone())
+                            SymbolicValue::ConstantInt((lv * rv_inv) % prime)
+                        }
                     }
                     ExpressionInfixOpcode::IntDiv => SymbolicValue::ConstantInt(lv / rv),
                     ExpressionInfixOpcode::Mod => SymbolicValue::ConstantInt(lv % rv),
@@ -328,22 +409,22 @@ fn evaluate_symbolic_value(
                         SymbolicValue::ConstantInt(lv >> rv.to_usize().unwrap())
                     }
                     ExpressionInfixOpcode::Lesser => {
-                        SymbolicValue::ConstantBool(lv % prime.clone() < rv % prime.clone())
+                        SymbolicValue::ConstantBool(lv % prime < rv % prime)
                     }
                     ExpressionInfixOpcode::Greater => {
-                        SymbolicValue::ConstantBool(lv % prime.clone() > rv % prime.clone())
+                        SymbolicValue::ConstantBool(lv % prime > rv % prime)
                     }
                     ExpressionInfixOpcode::LesserEq => {
-                        SymbolicValue::ConstantBool(lv % prime.clone() <= rv % prime.clone())
+                        SymbolicValue::ConstantBool(lv % prime <= rv % prime)
                     }
                     ExpressionInfixOpcode::GreaterEq => {
-                        SymbolicValue::ConstantBool(lv % prime.clone() >= rv % prime.clone())
+                        SymbolicValue::ConstantBool(lv % prime >= rv % prime)
                     }
                     ExpressionInfixOpcode::Eq => {
-                        SymbolicValue::ConstantBool(lv % prime.clone() == rv % prime.clone())
+                        SymbolicValue::ConstantBool(lv % prime == rv % prime)
                     }
                     ExpressionInfixOpcode::NotEq => {
-                        SymbolicValue::ConstantBool(lv % prime.clone() != rv % prime.clone())
+                        SymbolicValue::ConstantBool(lv % prime != rv % prime)
                     }
                     _ => todo!(),
                 },
@@ -356,7 +437,7 @@ fn evaluate_symbolic_value(
             }
         }
         SymbolicValue::UnaryOp(op, expr) => {
-            let expr_val = evaluate_symbolic_value(prime.clone(), expr, assignment);
+            let expr_val = evaluate_symbolic_value(prime, expr, assignment);
             match &expr_val {
                 SymbolicValue::ConstantInt(rv) => match op.0 {
                     ExpressionPrefixOpcode::Sub => SymbolicValue::ConstantInt(-1 * rv),
