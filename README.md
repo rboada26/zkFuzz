@@ -88,7 +88,7 @@ Progress: 13 / 21888242871839275222246405745257275088548364400416034343698204186
      ├─ Total iterations: 13
      └─ Verification result: 🔥 UnderConstrained 🔥
 ╔══════════════════════════════════════════════════════════════╗
-║🚨 Counter Example:                                           ║
+║🚨 Counter Example:                                           
 ║    🔥 UnderConstrained 🔥
 ║    🔍 Assignment Details:
 ║           ➡️ main.in = 1
