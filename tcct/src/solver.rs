@@ -1,13 +1,14 @@
 use colored::Colorize;
 use num_bigint_dig::BigInt;
 use num_traits::cast::ToPrimitive;
-use num_traits::Pow;
 use num_traits::Signed;
 use num_traits::{One, Zero};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::io;
 use std::io::Write;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -15,9 +16,12 @@ use program_structure::ast::Expression;
 use program_structure::ast::ExpressionInfixOpcode;
 use program_structure::ast::ExpressionPrefixOpcode;
 
-use crate::symbolic_execution::{SymbolicExecutor, SymbolicValue};
+use crate::symbolic_execution::SymbolicExecutor;
+use crate::symbolic_value::SymbolicName;
+use crate::symbolic_value::{OwnerName, SymbolicValue};
 use crate::utils::extended_euclidean;
 
+/// Represents the result of a constraint verification process.
 pub enum VerificationResult {
     UnderConstrained,
     OverConstrained,
@@ -25,8 +29,10 @@ pub enum VerificationResult {
 }
 
 impl fmt::Display for VerificationResult {
-    /// Provides a user-friendly string representation of the `VerificationResult`,
-    /// with colored highlights to indicate the constraint status.
+    /// Formats the `VerificationResult` for display, using color-coded output.
+    ///
+    /// # Returns
+    /// A `fmt::Result` indicating success or failure of the formatting
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let output = match self {
             VerificationResult::UnderConstrained => "🔥 UnderConstrained 🔥".red().bold(),
@@ -37,47 +43,62 @@ impl fmt::Display for VerificationResult {
     }
 }
 
-/// A structure representing a counterexample when constraints are invalid.
+/// Represents a counterexample when constraints are found to be invalid.
 pub struct CounterExample {
-    /// The verification result indicating the type of constraint violation.
     flag: VerificationResult,
-    /// A mapping of variable names to their assigned values that led to the violation.
-    assignment: HashMap<String, BigInt>,
+    assignment: FxHashMap<SymbolicName, BigInt>,
 }
 
-impl fmt::Debug for CounterExample {
-    /// Provides a detailed, user-friendly debug output for a counterexample,
-    /// including variable assignments.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "   🚨 {}",
+impl CounterExample {
+    /// Generates a detailed, user-friendly debug output for the counterexample.
+    ///
+    /// # Parameters
+    /// - `lookup`: A hash map associating variable IDs with their string representations.
+    ///
+    /// # Returns
+    /// A formatted string containing the counterexample details.
+    pub fn lookup_fmt(&self, lookup: &FxHashMap<usize, String>) -> String {
+        let mut s = "".to_string();
+        s += &format!(
+            "{}",
+            "╔══════════════════════════════════════════════════════════════╗\n".red()
+        );
+        s += &format!("{}", "║".red());
+        s += &format!(
+            "🚨 {}                                           ",
             "Counter Example:".on_bright_red().white().bold()
-        )?;
-        writeln!(f, "      {}", self.flag);
-        writeln!(f, "      {}", "🔍 Assignment Details:".blue().bold())?;
+        );
+        s += &format!("{}", "║\n".red());
+        s += &format!("{}", "║".red());
+        s += &format!("    {} \n", self.flag);
+        s += &format!("{}", "║".red());
+        s += &format!("    {} \n", "🔍 Assignment Details:".blue().bold());
 
         for (var, value) in &self.assignment {
-            writeln!(
-                f,
-                "           {} {} = {}",
+            s += &format!("{}", "║".red());
+            s += &format!(
+                "           {} {} = {} \n",
                 "➡️".cyan(),
-                var.magenta().bold(),
+                var.lookup_fmt(lookup).magenta().bold(),
                 value.to_string().bright_yellow()
-            )?;
+            );
         }
+        s += &format!(
+            "{}",
+            "╚══════════════════════════════════════════════════════════════╝\n".red()
+        );
 
-        Ok(())
+        s
     }
 }
 
-/// Determines if a given verification result indicates vulnerability.
+/// Determines if a given verification result indicates a vulnerability.
 ///
 /// # Parameters
-/// - `vr`: The verification result to evaluate.
+/// - `vr`: The `VerificationResult` to evaluate.
 ///
 /// # Returns
-/// `true` if the result indicates a vulnerability, otherwise `false`.
+/// `true` if the result indicates a vulnerability, `false` otherwise.
 fn is_vulnerable(vr: &VerificationResult) -> bool {
     match vr {
         VerificationResult::UnderConstrained => true,
@@ -86,81 +107,93 @@ fn is_vulnerable(vr: &VerificationResult) -> bool {
     }
 }
 
-/// Performs brute-force search over variable assignments to evaluate constraints.
+/// Configures the settings for the verification process.
+pub struct VerificationSetting {
+    pub id: String,
+    pub prime: BigInt,
+    pub quick_mode: bool,
+    pub progress_interval: usize,
+    pub template_param_names: Vec<String>,
+    pub template_param_values: Vec<Expression>,
+}
+
+/// Performs a brute-force search over variable assignments to evaluate constraints.
 ///
 /// # Parameters
-/// - `prime`: The prime modulus for computations.
-/// - `id`: The identifier of the symbolic executor's current context.
 /// - `sexe`: A mutable reference to the symbolic executor.
-/// - `trace_constraints`: The constraints representing the program trace.
-/// - `side_constraints`: Additional constraints for validation.
+/// - `trace_constraints`: A vector of constraints representing the program trace.
+/// - `side_constraints`: A vector of additional constraints for validation.
+/// - `setting`: The verification settings.
 ///
 /// # Returns
-/// A `CounterExample` if constraints are invalid, otherwise `None`.
+/// An `Option<CounterExample>` containing a counterexample if constraints are invalid, or `None` otherwise.
 pub fn brute_force_search(
-    prime: BigInt,
-    id: String,
     sexe: &mut SymbolicExecutor,
-    trace_constraints: &Vec<Box<SymbolicValue>>,
-    side_constraints: &Vec<Box<SymbolicValue>>,
-    quick_mode: bool,
-    template_param_names: &Vec<String>,
-    template_param_values: &Vec<Expression>,
+    trace_constraints: &Vec<Rc<SymbolicValue>>,
+    side_constraints: &Vec<Rc<SymbolicValue>>,
+    setting: &VerificationSetting,
 ) -> Option<CounterExample> {
     let mut trace_variables = extract_variables(trace_constraints);
     let mut side_variables = extract_variables(side_constraints);
+
     let mut variables = Vec::new();
     variables.append(&mut trace_variables);
     variables.append(&mut side_variables);
-    let variables_set: HashSet<String> = variables.iter().cloned().collect();
+    let variables_set: HashSet<SymbolicName> = variables.iter().cloned().collect();
     variables = variables_set.into_iter().collect();
 
-    let mut assignment = HashMap::new();
-
+    let mut assignment = FxHashMap::default();
     let current_iteration = Arc::new(AtomicUsize::new(0));
-    let progress_interval = 10000; // Update progress every 1000 iterations
 
     fn search(
-        prime: &BigInt,
-        id: &String,
         sexe: &mut SymbolicExecutor,
+        trace_constraints: &[Rc<SymbolicValue>],
+        side_constraints: &[Rc<SymbolicValue>],
+        setting: &VerificationSetting,
         index: usize,
-        variables: &[String],
-        assignment: &mut HashMap<String, BigInt>,
-        trace_constraints: &[Box<SymbolicValue>],
-        side_constraints: &[Box<SymbolicValue>],
+        variables: &[SymbolicName],
+        assignment: &mut FxHashMap<SymbolicName, BigInt>,
         current_iteration: &Arc<AtomicUsize>,
-        progress_interval: usize,
-        quick_mode: bool,
-        template_param_names: &Vec<String>,
-        template_param_values: &Vec<Expression>,
     ) -> VerificationResult {
         if index == variables.len() {
             let iter = current_iteration.fetch_add(1, Ordering::SeqCst);
-            if iter % progress_interval == 0 {
-                print!("\rProgress: {} / {}^{}", iter, prime, variables.len());
+            if iter % setting.progress_interval == 0 {
+                print!(
+                    "\rProgress: {} / {}^{}",
+                    iter,
+                    &setting.prime,
+                    variables.len()
+                );
                 io::stdout().flush().unwrap();
             }
 
-            let is_satisfy_tc = evaluate_constraints(prime, trace_constraints, assignment);
-            let is_satisfy_sc = evaluate_constraints(prime, side_constraints, assignment);
+            let is_satisfy_tc = evaluate_constraints(&setting.prime, trace_constraints, assignment);
+            let is_satisfy_sc = evaluate_constraints(&setting.prime, side_constraints, assignment);
 
             if is_satisfy_tc && !is_satisfy_sc {
                 return VerificationResult::OverConstrained;
             } else if !is_satisfy_tc && is_satisfy_sc {
                 sexe.clear();
-                sexe.cur_state.set_owner("main".to_string());
-                sexe.keep_track_unrolled_offset = false;
-                sexe.off_trace = true;
-                sexe.feed_arguments(template_param_names, template_param_values);
-                sexe.concrete_execute(id, assignment, true);
+                sexe.cur_state.add_owner(&OwnerName {
+                    name: sexe.symbolic_library.name2id["main"],
+                    counter: 0,
+                });
+                sexe.feed_arguments(
+                    &setting.template_param_names,
+                    &setting.template_param_values,
+                );
+                sexe.concrete_execute(&setting.id, assignment);
 
                 let mut flag = false;
-                if sexe.final_states.len() > 0 {
-                    for vname in &sexe.template_library[id].unrolled_outputs {
+                if sexe.symbolic_store.final_states.len() > 0 {
+                    for vname in &sexe.symbolic_library.template_library
+                        [&sexe.symbolic_library.name2id[&setting.id]]
+                        .unrolled_outputs
+                    {
                         //let vname = format!("{}.{}", sexe.cur_state.get_owner(), n.to_string());
-                        let unboxed_value = sexe.final_states[0].values[&vname.clone()].clone();
-                        if let SymbolicValue::ConstantInt(v) = *unboxed_value {
+                        let unboxed_value =
+                            sexe.symbolic_store.final_states[0].values[&vname.clone()].clone();
+                        if let SymbolicValue::ConstantInt(v) = (*unboxed_value.clone()).clone() {
                             if v != assignment[&vname.clone()] {
                                 flag = true;
                                 break;
@@ -180,24 +213,19 @@ pub fn brute_force_search(
         }
 
         let var = &variables[index];
-        if quick_mode {
+        if setting.quick_mode {
             let candidates = vec![BigInt::zero(), BigInt::one(), -1 * BigInt::one()];
             for c in candidates.into_iter() {
                 assignment.insert(var.clone(), c.clone());
                 let result = search(
-                    prime,
-                    id,
                     sexe,
+                    trace_constraints,
+                    side_constraints,
+                    setting,
                     index + 1,
                     variables,
                     assignment,
-                    trace_constraints,
-                    side_constraints,
                     current_iteration,
-                    progress_interval,
-                    quick_mode,
-                    template_param_names,
-                    template_param_values,
                 );
                 if is_vulnerable(&result) {
                     return result;
@@ -206,22 +234,17 @@ pub fn brute_force_search(
             }
         } else {
             let mut value = BigInt::zero();
-            while value < *prime {
+            while value < setting.prime {
                 assignment.insert(var.clone(), value.clone());
                 let result = search(
-                    prime,
-                    id,
                     sexe,
+                    trace_constraints,
+                    side_constraints,
+                    setting,
                     index + 1,
                     variables,
                     assignment,
-                    trace_constraints,
-                    side_constraints,
                     current_iteration,
-                    progress_interval,
-                    quick_mode,
-                    template_param_names,
-                    template_param_values,
                 );
                 if is_vulnerable(&result) {
                     return result;
@@ -234,33 +257,30 @@ pub fn brute_force_search(
     }
 
     let flag = search(
-        &prime,
-        &id,
         sexe,
+        &trace_constraints,
+        &side_constraints,
+        setting,
         0,
         &variables,
         &mut assignment,
-        &trace_constraints,
-        &side_constraints,
         &current_iteration,
-        progress_interval,
-        quick_mode,
-        template_param_names,
-        template_param_values,
     );
 
     print!(
         "\rProgress: {} / {}^{}",
         current_iteration.load(Ordering::SeqCst),
-        prime,
+        setting.prime,
         variables.len()
     );
     io::stdout().flush().unwrap();
 
+    println!("\n • Search completed");
     println!(
-        "\nSearch completed. Total iterations: {}",
+        "     ├─ Total iterations: {}",
         current_iteration.load(Ordering::SeqCst)
     );
+    println!("     └─ Verification result: {}", flag);
 
     if is_vulnerable(&flag) {
         Some(CounterExample {
@@ -278,13 +298,13 @@ pub fn brute_force_search(
 /// - `constraints`: A slice of symbolic values representing the constraints.
 ///
 /// # Returns
-/// A vector of unique variable names referenced in the constraints.
-fn extract_variables(constraints: &[Box<SymbolicValue>]) -> Vec<String> {
+/// A vector of unique `SymbolicName`s referenced in the constraints.
+fn extract_variables(constraints: &[Rc<SymbolicValue>]) -> Vec<SymbolicName> {
     let mut variables = Vec::new();
     for constraint in constraints {
         extract_variables_from_symbolic_value(constraint, &mut variables);
     }
-    variables.sort();
+    //variables.sort();
     variables.dedup();
     variables
 }
@@ -292,11 +312,11 @@ fn extract_variables(constraints: &[Box<SymbolicValue>]) -> Vec<String> {
 /// Recursively extracts variable names from a symbolic value.
 ///
 /// # Parameters
-/// - `value`: The symbolic value to analyze.
-/// - `variables`: A mutable reference to a vector where variable names will be stored.
-fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut Vec<String>) {
+/// - `value`: The `SymbolicValue` to analyze.
+/// - `variables`: A mutable reference to a vector where extracted variable names will be stored.
+fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut Vec<SymbolicName>) {
     match value {
-        SymbolicValue::Variable(name, _) => variables.push(name.clone()),
+        SymbolicValue::Variable(name) => variables.push(name.clone()),
         SymbolicValue::BinaryOp(lhs, _, rhs) => {
             extract_variables_from_symbolic_value(&lhs, variables);
             extract_variables_from_symbolic_value(&rhs, variables);
@@ -309,7 +329,7 @@ fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut 
         SymbolicValue::UnaryOp(_, expr) => extract_variables_from_symbolic_value(&expr, variables),
         SymbolicValue::Array(elements) | SymbolicValue::Tuple(elements) => {
             for elem in elements {
-                extract_variables_from_symbolic_value(&Box::new(elem), variables);
+                extract_variables_from_symbolic_value(&elem, variables);
             }
         }
         SymbolicValue::UniformArray(value, size) => {
@@ -318,17 +338,26 @@ fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut 
         }
         SymbolicValue::Call(_, args) => {
             for arg in args {
-                extract_variables_from_symbolic_value(&Box::new(arg), variables);
+                extract_variables_from_symbolic_value(&arg, variables);
             }
         }
         _ => {}
     }
 }
 
+/// Evaluates a set of constraints given a variable assignment.
+///
+/// # Parameters
+/// - `prime`: The prime modulus for computations.
+/// - `constraints`: A slice of symbolic values representing the constraints to evaluate.
+/// - `assignment`: A hash map of variable assignments.
+///
+/// # Returns
+/// `true` if all constraints are satisfied, `false` otherwise.
 fn evaluate_constraints(
     prime: &BigInt,
-    constraints: &[Box<SymbolicValue>],
-    assignment: &HashMap<String, BigInt>,
+    constraints: &[Rc<SymbolicValue>],
+    assignment: &FxHashMap<SymbolicName, BigInt>,
 ) -> bool {
     constraints.iter().all(|constraint| {
         let sv = evaluate_symbolic_value(prime, constraint, assignment);
@@ -339,10 +368,19 @@ fn evaluate_constraints(
     })
 }
 
+/// Counts the number of satisfied constraints given a variable assignment.
+///
+/// # Parameters
+/// - `prime`: The prime modulus for computations.
+/// - `constraints`: A slice of symbolic values representing the constraints to evaluate.
+/// - `assignment`: A hash map of variable assignments.
+///
+/// # Returns
+/// The number of satisfied constraints.
 fn count_satisfied_constraints(
     prime: &BigInt,
-    constraints: &[Box<SymbolicValue>],
-    assignment: &HashMap<String, BigInt>,
+    constraints: &[Rc<SymbolicValue>],
+    assignment: &FxHashMap<SymbolicName, BigInt>,
 ) -> usize {
     constraints
         .iter()
@@ -356,15 +394,24 @@ fn count_satisfied_constraints(
         .count()
 }
 
+/// Evaluates a symbolic value given a variable assignment.
+///
+/// # Parameters
+/// - `prime`: The prime modulus for computations.
+/// - `value`: The `SymbolicValue` to evaluate.
+/// - `assignment`: A hash map of variable assignments.
+///
+/// # Returns
+/// The evaluated `SymbolicValue`.
 fn evaluate_symbolic_value(
     prime: &BigInt,
     value: &SymbolicValue,
-    assignment: &HashMap<String, BigInt>,
+    assignment: &FxHashMap<SymbolicName, BigInt>,
 ) -> SymbolicValue {
     match value {
-        SymbolicValue::ConstantBool(b) => value.clone(),
-        SymbolicValue::ConstantInt(v) => value.clone(),
-        SymbolicValue::Variable(name, _) => {
+        SymbolicValue::ConstantBool(_b) => value.clone(),
+        SymbolicValue::ConstantInt(_v) => value.clone(),
+        SymbolicValue::Variable(name) => {
             SymbolicValue::ConstantInt(assignment.get(name).unwrap().clone())
         }
         SymbolicValue::BinaryOp(lhs, op, rhs) => {
