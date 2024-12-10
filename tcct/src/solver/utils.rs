@@ -1,16 +1,13 @@
+use std::fmt;
+use std::io::Write;
+use std::rc::Rc;
+
 use colored::Colorize;
 use num_bigint_dig::BigInt;
 use num_traits::cast::ToPrimitive;
 use num_traits::Signed;
-use num_traits::{One, Zero};
-use rustc_hash::FxHashMap;
-use std::collections::HashSet;
-use std::fmt;
-use std::io;
-use std::io::Write;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use num_traits::Zero;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use program_structure::ast::Expression;
 use program_structure::ast::ExpressionInfixOpcode;
@@ -45,8 +42,8 @@ impl fmt::Display for VerificationResult {
 
 /// Represents a counterexample when constraints are found to be invalid.
 pub struct CounterExample {
-    flag: VerificationResult,
-    assignment: FxHashMap<SymbolicName, BigInt>,
+    pub flag: VerificationResult,
+    pub assignment: FxHashMap<SymbolicName, BigInt>,
 }
 
 impl CounterExample {
@@ -99,7 +96,7 @@ impl CounterExample {
 ///
 /// # Returns
 /// `true` if the result indicates a vulnerability, `false` otherwise.
-fn is_vulnerable(vr: &VerificationResult) -> bool {
+pub fn is_vulnerable(vr: &VerificationResult) -> bool {
     match vr {
         VerificationResult::UnderConstrained => true,
         VerificationResult::OverConstrained => true,
@@ -117,181 +114,6 @@ pub struct VerificationSetting {
     pub template_param_values: Vec<Expression>,
 }
 
-/// Performs a brute-force search over variable assignments to evaluate constraints.
-///
-/// # Parameters
-/// - `sexe`: A mutable reference to the symbolic executor.
-/// - `trace_constraints`: A vector of constraints representing the program trace.
-/// - `side_constraints`: A vector of additional constraints for validation.
-/// - `setting`: The verification settings.
-///
-/// # Returns
-/// An `Option<CounterExample>` containing a counterexample if constraints are invalid, or `None` otherwise.
-pub fn brute_force_search(
-    sexe: &mut SymbolicExecutor,
-    trace_constraints: &Vec<Rc<SymbolicValue>>,
-    side_constraints: &Vec<Rc<SymbolicValue>>,
-    setting: &VerificationSetting,
-) -> Option<CounterExample> {
-    let mut trace_variables = extract_variables(trace_constraints);
-    let mut side_variables = extract_variables(side_constraints);
-
-    let mut variables = Vec::new();
-    variables.append(&mut trace_variables);
-    variables.append(&mut side_variables);
-    let variables_set: HashSet<SymbolicName> = variables.iter().cloned().collect();
-    variables = variables_set.into_iter().collect();
-
-    let mut assignment = FxHashMap::default();
-    let current_iteration = Arc::new(AtomicUsize::new(0));
-
-    fn search(
-        sexe: &mut SymbolicExecutor,
-        trace_constraints: &[Rc<SymbolicValue>],
-        side_constraints: &[Rc<SymbolicValue>],
-        setting: &VerificationSetting,
-        index: usize,
-        variables: &[SymbolicName],
-        assignment: &mut FxHashMap<SymbolicName, BigInt>,
-        current_iteration: &Arc<AtomicUsize>,
-    ) -> VerificationResult {
-        if index == variables.len() {
-            let iter = current_iteration.fetch_add(1, Ordering::SeqCst);
-            if iter % setting.progress_interval == 0 {
-                print!(
-                    "\rProgress: {} / {}^{}",
-                    iter,
-                    &setting.prime,
-                    variables.len()
-                );
-                io::stdout().flush().unwrap();
-            }
-
-            let is_satisfy_tc = evaluate_constraints(&setting.prime, trace_constraints, assignment);
-            let is_satisfy_sc = evaluate_constraints(&setting.prime, side_constraints, assignment);
-
-            if is_satisfy_tc && !is_satisfy_sc {
-                return VerificationResult::OverConstrained;
-            } else if !is_satisfy_tc && is_satisfy_sc {
-                sexe.clear();
-                sexe.cur_state.add_owner(&OwnerName {
-                    name: sexe.symbolic_library.name2id["main"],
-                    counter: 0,
-                });
-                sexe.feed_arguments(
-                    &setting.template_param_names,
-                    &setting.template_param_values,
-                );
-                sexe.concrete_execute(&setting.id, assignment);
-
-                let mut flag = false;
-                if sexe.symbolic_store.final_states.len() > 0 {
-                    for vname in &sexe.symbolic_library.template_library
-                        [&sexe.symbolic_library.name2id[&setting.id]]
-                        .unrolled_outputs
-                    {
-                        //let vname = format!("{}.{}", sexe.cur_state.get_owner(), n.to_string());
-                        let unboxed_value =
-                            sexe.symbolic_store.final_states[0].values[&vname.clone()].clone();
-                        if let SymbolicValue::ConstantInt(v) = (*unboxed_value.clone()).clone() {
-                            if v != assignment[&vname.clone()] {
-                                flag = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if flag {
-                    return VerificationResult::UnderConstrained;
-                } else {
-                    return VerificationResult::WellConstrained;
-                }
-            } else {
-                return VerificationResult::WellConstrained;
-            }
-        }
-
-        let var = &variables[index];
-        if setting.quick_mode {
-            let candidates = vec![BigInt::zero(), BigInt::one(), -1 * BigInt::one()];
-            for c in candidates.into_iter() {
-                assignment.insert(var.clone(), c.clone());
-                let result = search(
-                    sexe,
-                    trace_constraints,
-                    side_constraints,
-                    setting,
-                    index + 1,
-                    variables,
-                    assignment,
-                    current_iteration,
-                );
-                if is_vulnerable(&result) {
-                    return result;
-                }
-                assignment.remove(var);
-            }
-        } else {
-            let mut value = BigInt::zero();
-            while value < setting.prime {
-                assignment.insert(var.clone(), value.clone());
-                let result = search(
-                    sexe,
-                    trace_constraints,
-                    side_constraints,
-                    setting,
-                    index + 1,
-                    variables,
-                    assignment,
-                    current_iteration,
-                );
-                if is_vulnerable(&result) {
-                    return result;
-                }
-                assignment.remove(var);
-                value += BigInt::one();
-            }
-        }
-        VerificationResult::WellConstrained
-    }
-
-    let flag = search(
-        sexe,
-        &trace_constraints,
-        &side_constraints,
-        setting,
-        0,
-        &variables,
-        &mut assignment,
-        &current_iteration,
-    );
-
-    print!(
-        "\rProgress: {} / {}^{}",
-        current_iteration.load(Ordering::SeqCst),
-        setting.prime,
-        variables.len()
-    );
-    io::stdout().flush().unwrap();
-
-    println!("\n • Search completed");
-    println!(
-        "     ├─ Total iterations: {}",
-        current_iteration.load(Ordering::SeqCst)
-    );
-    println!("     └─ Verification result: {}", flag);
-
-    if is_vulnerable(&flag) {
-        Some(CounterExample {
-            flag: flag,
-            assignment: assignment,
-        })
-    } else {
-        None
-    }
-}
-
 /// Extracts all unique variable names referenced in a set of constraints.
 ///
 /// # Parameters
@@ -299,14 +121,12 @@ pub fn brute_force_search(
 ///
 /// # Returns
 /// A vector of unique `SymbolicName`s referenced in the constraints.
-fn extract_variables(constraints: &[Rc<SymbolicValue>]) -> Vec<SymbolicName> {
-    let mut variables = Vec::new();
+pub fn extract_variables(constraints: &[Rc<SymbolicValue>]) -> Vec<SymbolicName> {
+    let mut variables = FxHashSet::default();
     for constraint in constraints {
         extract_variables_from_symbolic_value(constraint, &mut variables);
     }
-    //variables.sort();
-    variables.dedup();
-    variables
+    variables.into_iter().collect()
 }
 
 /// Recursively extracts variable names from a symbolic value.
@@ -314,9 +134,18 @@ fn extract_variables(constraints: &[Rc<SymbolicValue>]) -> Vec<SymbolicName> {
 /// # Parameters
 /// - `value`: The `SymbolicValue` to analyze.
 /// - `variables`: A mutable reference to a vector where extracted variable names will be stored.
-fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut Vec<SymbolicName>) {
+pub fn extract_variables_from_symbolic_value(
+    value: &SymbolicValue,
+    variables: &mut FxHashSet<SymbolicName>,
+) {
     match value {
-        SymbolicValue::Variable(name) => variables.push(name.clone()),
+        SymbolicValue::Variable(name) => {
+            variables.insert(name.clone());
+        }
+        SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+            extract_variables_from_symbolic_value(&lhs, variables);
+            extract_variables_from_symbolic_value(&rhs, variables);
+        }
         SymbolicValue::BinaryOp(lhs, _, rhs) => {
             extract_variables_from_symbolic_value(&lhs, variables);
             extract_variables_from_symbolic_value(&rhs, variables);
@@ -345,6 +174,51 @@ fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut 
     }
 }
 
+pub fn get_dependency_graph(
+    values: &[Rc<SymbolicValue>],
+    graph: &mut FxHashMap<SymbolicName, FxHashSet<SymbolicName>>,
+) {
+    for value in values {
+        match value.as_ref() {
+            SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+                if let SymbolicValue::Variable(name) = lhs.as_ref() {
+                    graph.entry(name.clone()).or_default();
+                    extract_variables_from_symbolic_value(&rhs, graph.get_mut(&name).unwrap());
+                } else {
+                    panic!("Left hand of the assignment is not a variable");
+                }
+            }
+            SymbolicValue::BinaryOp(lhs, op, rhs) => {
+                let mut variables = FxHashSet::default();
+                extract_variables_from_symbolic_value(&lhs, &mut variables);
+                extract_variables_from_symbolic_value(&rhs, &mut variables);
+
+                for v1 in &variables {
+                    for v2 in &variables {
+                        if v1 != v2 {
+                            graph.entry(v1.clone()).or_default().insert(v2.clone());
+                            graph.entry(v2.clone()).or_default().insert(v1.clone());
+                        }
+                    }
+                }
+            }
+            SymbolicValue::UnaryOp(op, expr) => {
+                let mut variables = FxHashSet::default();
+                extract_variables_from_symbolic_value(&expr, &mut variables);
+                for v1 in &variables {
+                    for v2 in &variables {
+                        if v1 != v2 {
+                            graph.entry(v1.clone()).or_default().insert(v2.clone());
+                            graph.entry(v2.clone()).or_default().insert(v1.clone());
+                        }
+                    }
+                }
+            }
+            _ => todo!(),
+        }
+    }
+}
+
 /// Evaluates a set of constraints given a variable assignment.
 ///
 /// # Parameters
@@ -354,7 +228,7 @@ fn extract_variables_from_symbolic_value(value: &SymbolicValue, variables: &mut 
 ///
 /// # Returns
 /// `true` if all constraints are satisfied, `false` otherwise.
-fn evaluate_constraints(
+pub fn evaluate_constraints(
     prime: &BigInt,
     constraints: &[Rc<SymbolicValue>],
     assignment: &FxHashMap<SymbolicName, BigInt>,
@@ -377,7 +251,7 @@ fn evaluate_constraints(
 ///
 /// # Returns
 /// The number of satisfied constraints.
-fn count_satisfied_constraints(
+pub fn count_satisfied_constraints(
     prime: &BigInt,
     constraints: &[Rc<SymbolicValue>],
     assignment: &FxHashMap<SymbolicName, BigInt>,
@@ -394,6 +268,77 @@ fn count_satisfied_constraints(
         .count()
 }
 
+pub fn emulate_symbolic_values(
+    prime: &BigInt,
+    values: &[Rc<SymbolicValue>],
+    assignment: &mut FxHashMap<SymbolicName, BigInt>,
+) -> bool {
+    for value in values {
+        match value.as_ref() {
+            SymbolicValue::ConstantBool(b) => {
+                if !b {
+                    return false;
+                }
+            }
+            SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+                if let SymbolicValue::Variable(name) = lhs.as_ref() {
+                    let rhs_val = evaluate_symbolic_value(prime, rhs, assignment);
+                    if let SymbolicValue::ConstantInt(num) = &rhs_val {
+                        assignment.insert(name.clone(), num.clone());
+                    } else {
+                        panic!("Right hand is not completely folded");
+                    }
+                } else {
+                    panic!("Left hand of the assignment is not a variable");
+                }
+            }
+            SymbolicValue::BinaryOp(lhs, op, rhs) => {
+                let lhs_val = evaluate_symbolic_value(prime, lhs, assignment);
+                let rhs_val = evaluate_symbolic_value(prime, rhs, assignment);
+                let flag = match (&lhs_val, &rhs_val) {
+                    (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => {
+                        match op.0 {
+                            ExpressionInfixOpcode::Lesser => lv % prime < rv % prime,
+                            ExpressionInfixOpcode::Greater => lv % prime > rv % prime,
+                            ExpressionInfixOpcode::LesserEq => lv % prime <= rv % prime,
+                            ExpressionInfixOpcode::GreaterEq => lv % prime >= rv % prime,
+                            ExpressionInfixOpcode::Eq => lv % prime == rv % prime,
+                            ExpressionInfixOpcode::NotEq => lv % prime != rv % prime,
+                            _ => panic!("Non-Boolean Operation"),
+                        }
+                    }
+                    (SymbolicValue::ConstantBool(lv), SymbolicValue::ConstantBool(rv)) => {
+                        match &op.0 {
+                            ExpressionInfixOpcode::BoolAnd => *lv && *rv,
+                            ExpressionInfixOpcode::BoolOr => *lv || *rv,
+                            _ => todo!(),
+                        }
+                    }
+                    _ => panic!("Unassigned variables exist"),
+                };
+                if !flag {
+                    return false;
+                }
+            }
+            SymbolicValue::UnaryOp(op, expr) => {
+                let expr_val = evaluate_symbolic_value(prime, expr, assignment);
+                let flag = match &expr_val {
+                    SymbolicValue::ConstantBool(rv) => match op.0 {
+                        ExpressionPrefixOpcode::BoolNot => !rv,
+                        _ => panic!("Unassigned variables exist"),
+                    },
+                    _ => panic!("Non-Boolean Operation"),
+                };
+                if !flag {
+                    return false;
+                }
+            }
+            _ => panic!("Non-Supported SymbolicValue"),
+        }
+    }
+    return true;
+}
+
 /// Evaluates a symbolic value given a variable assignment.
 ///
 /// # Parameters
@@ -403,7 +348,7 @@ fn count_satisfied_constraints(
 ///
 /// # Returns
 /// The evaluated `SymbolicValue`.
-fn evaluate_symbolic_value(
+pub fn evaluate_symbolic_value(
     prime: &BigInt,
     value: &SymbolicValue,
     assignment: &FxHashMap<SymbolicName, BigInt>,
@@ -413,6 +358,16 @@ fn evaluate_symbolic_value(
         SymbolicValue::ConstantInt(_v) => value.clone(),
         SymbolicValue::Variable(name) => {
             SymbolicValue::ConstantInt(assignment.get(name).unwrap().clone())
+        }
+        SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+            let lhs_val = evaluate_symbolic_value(prime, lhs, assignment);
+            let rhs_val = evaluate_symbolic_value(prime, rhs, assignment);
+            match (&lhs_val, &rhs_val) {
+                (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => {
+                    SymbolicValue::ConstantBool(lv % prime == rv % prime)
+                }
+                _ => panic!("Unassigned variables exist"),
+            }
         }
         SymbolicValue::BinaryOp(lhs, op, rhs) => {
             let lhs_val = evaluate_symbolic_value(prime, lhs, assignment);
@@ -498,5 +453,65 @@ fn evaluate_symbolic_value(
             }
         }
         _ => todo!(),
+    }
+}
+
+pub fn verify_assignment(
+    sexe: &mut SymbolicExecutor,
+    trace_constraints: &[Rc<SymbolicValue>],
+    side_constraints: &[Rc<SymbolicValue>],
+    assignment: &FxHashMap<SymbolicName, BigInt>,
+    setting: &VerificationSetting,
+) -> VerificationResult {
+    let is_satisfy_tc = evaluate_constraints(&setting.prime, trace_constraints, assignment);
+    let is_satisfy_sc = evaluate_constraints(&setting.prime, side_constraints, assignment);
+
+    if is_satisfy_tc && !is_satisfy_sc {
+        return VerificationResult::OverConstrained;
+    } else if !is_satisfy_tc && is_satisfy_sc {
+        sexe.clear();
+        sexe.cur_state.add_owner(&OwnerName {
+            name: sexe.symbolic_library.name2id["main"],
+            counter: 0,
+        });
+        sexe.feed_arguments(
+            &setting.template_param_names,
+            &setting.template_param_values,
+        );
+        sexe.concrete_execute(&setting.id, assignment);
+
+        let mut flag = false;
+        if sexe.symbolic_store.final_states.len() > 0 {
+            for (k, v) in assignment {
+                if sexe.symbolic_library.template_library
+                    [&sexe.symbolic_library.name2id[&setting.id]]
+                    .outputs
+                    .contains(&k.name)
+                {
+                    let unboxed_value = &sexe.symbolic_store.final_states[0].values[&k];
+                    if let SymbolicValue::ConstantInt(num) = &(*unboxed_value.clone()) {
+                        if *num != *v {
+                            flag = true;
+                            break;
+                        }
+                    } else {
+                        panic!(
+                            "Undetermined Output: {}",
+                            unboxed_value
+                                .clone()
+                                .lookup_fmt(&sexe.symbolic_library.id2name)
+                        );
+                    }
+                }
+            }
+        }
+
+        if flag {
+            return VerificationResult::UnderConstrained;
+        } else {
+            return VerificationResult::WellConstrained;
+        }
+    } else {
+        return VerificationResult::WellConstrained;
     }
 }

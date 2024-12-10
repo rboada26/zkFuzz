@@ -1,8 +1,7 @@
 use colored::Colorize;
 use log::warn;
 use num_bigint_dig::BigInt;
-use rustc_hash::FxHashMap;
-use std::collections::HashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -11,7 +10,7 @@ use program_structure::ast::{ExpressionInfixOpcode, SignalType, Statement, Varia
 use crate::debug_ast::{DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode, DebugStatement};
 
 /// Represents the access type within a symbolic expression, such as component or array access.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum SymbolicAccess {
     ComponentAccess(usize),
     ArrayAccess(SymbolicValue),
@@ -46,13 +45,13 @@ impl SymbolicAccess {
 ///
 /// This enum can represent constants, variables, or operations such as binary, unary,
 /// conditional, arrays, tuples, uniform arrays, and function calls.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct OwnerName {
     pub name: usize,
     pub counter: usize,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SymbolicName {
     pub name: usize,
     pub owner: Rc<Vec<OwnerName>>,
@@ -86,11 +85,13 @@ impl SymbolicName {
 ///
 /// This enum can represent constants, variables, or operations such as binary, unary,
 /// conditional, arrays, tuples, uniform arrays, and function calls.
-#[derive(Clone, Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum SymbolicValue {
     ConstantInt(BigInt),
     ConstantBool(bool),
     Variable(SymbolicName),
+    Assign(Rc<SymbolicValue>, Rc<SymbolicValue>),
+    AssignEq(Rc<SymbolicValue>, Rc<SymbolicValue>),
     BinaryOp(
         Rc<SymbolicValue>,
         DebugExpressionInfixOpcode,
@@ -121,6 +122,22 @@ impl SymbolicValue {
                 format!("{} {}", if *flag { "✅" } else { "❌" }, flag)
             }
             SymbolicValue::Variable(sname) => sname.lookup_fmt(lookup),
+            SymbolicValue::Assign(lhs, rhs) => {
+                format!(
+                    "({} {} {})",
+                    "Assign".green(),
+                    lhs.lookup_fmt(lookup),
+                    rhs.lookup_fmt(lookup)
+                )
+            }
+            SymbolicValue::AssignEq(lhs, rhs) => {
+                format!(
+                    "({} {} {})",
+                    "AssignEq".green(),
+                    lhs.lookup_fmt(lookup),
+                    rhs.lookup_fmt(lookup)
+                )
+            }
             SymbolicValue::BinaryOp(lhs, op, rhs) => match &op.0 {
                 ExpressionInfixOpcode::Eq
                 | ExpressionInfixOpcode::NotEq
@@ -207,9 +224,8 @@ impl SymbolicValue {
 #[derive(Default, Clone)]
 pub struct SymbolicTemplate {
     pub template_parameter_names: Vec<usize>,
-    pub inputs: Vec<usize>,
-    pub outputs: Vec<usize>,
-    pub unrolled_outputs: HashSet<SymbolicName>,
+    pub inputs: FxHashSet<usize>,
+    pub outputs: FxHashSet<usize>,
     pub var2type: FxHashMap<usize, VariableType>,
     pub body: Vec<DebugStatement>,
 }
@@ -261,8 +277,8 @@ impl SymbolicLibrary {
         body: &Statement,
         template_parameter_names: &Vec<String>,
     ) {
-        let mut inputs: Vec<usize> = vec![];
-        let mut outputs: Vec<usize> = vec![];
+        let mut inputs = FxHashSet::default();
+        let mut outputs = FxHashSet::default();
         let mut var2type: FxHashMap<usize, VariableType> = FxHashMap::default();
 
         let i = if let Some(i) = self.name2id.get(&name) {
@@ -287,10 +303,10 @@ impl SymbolicLibrary {
                                 if let VariableType::Signal(typ, _taglist) = &xtype {
                                     match typ {
                                         SignalType::Input => {
-                                            inputs.push(*name);
+                                            inputs.insert(*name);
                                         }
                                         SignalType::Output => {
-                                            outputs.push(*name);
+                                            outputs.insert(*name);
                                         }
                                         SignalType::Intermediate => {}
                                     }
@@ -314,7 +330,6 @@ impl SymbolicLibrary {
                     .collect::<Vec<_>>(),
                 inputs: inputs,
                 outputs: outputs,
-                unrolled_outputs: HashSet::new(),
                 var2type: var2type,
                 body: vec![dbody.clone(), DebugStatement::Ret],
             }),

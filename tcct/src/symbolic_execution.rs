@@ -20,7 +20,7 @@ use crate::debug_ast::{
 use crate::symbolic_value::{
     OwnerName, SymbolicAccess, SymbolicComponent, SymbolicLibrary, SymbolicName, SymbolicValue,
 };
-use crate::utils::{extended_euclidean, italic};
+use crate::utils::{extended_euclidean, italic, modpow};
 
 /// Represents the state of symbolic execution, holding symbolic values,
 /// trace constraints, side constraints, and depth information.
@@ -179,16 +179,7 @@ impl SymbolicState {
         s += &format!(
             "  {} {}\n",
             format!("👤 {}", "owner:").cyan(),
-            italic(&format!(
-                "{:?}",
-                &self
-                    .owner_name
-                    .iter()
-                    .map(|c: &OwnerName| lookup[&c.name].clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-            .magenta()
+            italic(&format!("{:?}", &self.get_owner(lookup))).magenta()
         );
         s += &format!("  📏 {} {}\n", format!("{}", "depth:").cyan(), self.depth);
         s += &format!("  📋 {}\n", format!("{}", "values:").cyan());
@@ -260,8 +251,8 @@ pub struct SymbolicExecutorSetting {
     pub propagate_substitution: bool,
     pub skip_initialization_blocks: bool,
     pub off_trace: bool,
-    pub keep_track_unrolled_offset: bool,
     pub keep_track_constraints: bool,
+    pub substitute_output: bool,
 }
 
 /// A symbolic execution engine for analyzing and executing statements symbolically.
@@ -565,23 +556,34 @@ impl<'a> SymbolicExecutor<'a> {
 
                     if let SymbolicValue::ConstantBool(flag) = evaled_condition {
                         if flag {
+                            let mut stack_states = self.symbolic_store.block_end_states.clone();
+                            self.symbolic_store.block_end_states.clear();
                             self.execute(&vec![*stmt.clone()], 0);
-                            self.symbolic_store.block_end_states.pop();
-                            self.execute(statements, cur_bid);
+
+                            self.expand_all_stack_states(
+                                statements,
+                                cur_bid,
+                                self.cur_state.get_depth(),
+                            );
+
+                            self.symbolic_store
+                                .block_end_states
+                                .append(&mut stack_states);
                         } else {
                             self.symbolic_store
                                 .block_end_states
                                 .push(self.cur_state.clone());
+
+                            self.expand_all_stack_states(
+                                statements,
+                                cur_bid + 1,
+                                self.cur_state.get_depth(),
+                            );
                         }
                     } else {
                         panic!("This tool currently cannot handle the symbolic condition of While Loop: {}", evaled_condition.lookup_fmt(&self.symbolic_library.id2name));
                     }
 
-                    self.expand_all_stack_states(
-                        statements,
-                        cur_bid + 1,
-                        self.cur_state.get_depth(),
-                    );
                     // Note: This doesn't handle loop invariants or fixed-point computation
                 }
                 DebugStatement::Return { meta, value, .. } => {
@@ -649,30 +651,6 @@ impl<'a> SymbolicExecutor<'a> {
                             )
                         },
                     };
-
-                    if self.setting.keep_track_unrolled_offset {
-                        if self
-                            .symbolic_library
-                            .template_library
-                            .contains_key(&self.cur_state.template_id)
-                            && self.symbolic_library.template_library[&self.cur_state.template_id]
-                                .var2type
-                                .contains_key(&var.clone())
-                        {
-                            if let Some(&VariableType::Signal(SignalType::Output, _)) =
-                                self.symbolic_library.template_library[&self.cur_state.template_id]
-                                    .var2type
-                                    .get(&var)
-                            {
-                                self.symbolic_library
-                                    .template_library
-                                    .get_mut(&self.cur_state.template_id)
-                                    .unwrap()
-                                    .unrolled_outputs
-                                    .insert(var_name.clone());
-                            }
-                        }
-                    }
 
                     self.cur_state.set_symval(var_name.clone(), value.clone());
 
@@ -802,21 +780,32 @@ impl<'a> SymbolicExecutor<'a> {
                         }
                         _ => {
                             if self.symbolic_store.variable_types[var].0 != VariableType::Var {
-                                let cont = SymbolicValue::BinaryOp(
-                                    Rc::new(SymbolicValue::Variable(var_name.clone())),
-                                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
-                                    Rc::new(value),
-                                );
                                 if self.setting.keep_track_constraints {
-                                    self.cur_state.push_trace_constraint(&cont);
+                                    match op {
+                                        DebugAssignOp(AssignOp::AssignConstraintSignal) => {
+                                            let cont = SymbolicValue::AssignEq(
+                                                Rc::new(SymbolicValue::Variable(var_name.clone())),
+                                                Rc::new(value),
+                                            );
+                                            self.cur_state.push_trace_constraint(&cont);
 
-                                    if let DebugAssignOp(AssignOp::AssignConstraintSignal) = op {
-                                        let original_cont = SymbolicValue::BinaryOp(
-                                            Rc::new(SymbolicValue::Variable(var_name)),
-                                            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
-                                            Rc::new(original_value),
-                                        );
-                                        self.cur_state.push_side_constraint(&original_cont);
+                                            let original_cont = SymbolicValue::BinaryOp(
+                                                Rc::new(SymbolicValue::Variable(var_name)),
+                                                DebugExpressionInfixOpcode(
+                                                    ExpressionInfixOpcode::Eq,
+                                                ),
+                                                Rc::new(original_value),
+                                            );
+                                            self.cur_state.push_side_constraint(&original_cont);
+                                        }
+                                        DebugAssignOp(AssignOp::AssignSignal) => {
+                                            let cont = SymbolicValue::Assign(
+                                                Rc::new(SymbolicValue::Variable(var_name.clone())),
+                                                Rc::new(value),
+                                            );
+                                            self.cur_state.push_trace_constraint(&cont);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -837,23 +826,27 @@ impl<'a> SymbolicExecutor<'a> {
                     let simple_rhs = self.fold_variables(&rhe_val, true);
                     let rhs = self.fold_variables(&rhe_val, !self.setting.propagate_substitution);
 
-                    // Handle multiple substitution (simplified)
-                    let cont = SymbolicValue::BinaryOp(
-                        Rc::new(lhs),
-                        DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
-                        Rc::new(rhs),
-                    );
                     if self.setting.keep_track_constraints {
-                        self.cur_state.push_trace_constraint(&cont);
-                        if let DebugAssignOp(AssignOp::AssignConstraintSignal) = op {
-                            let simple_cont = SymbolicValue::BinaryOp(
-                                Rc::new(simple_lhs),
-                                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
-                                Rc::new(simple_rhs),
-                            );
-                            self.cur_state.push_side_constraint(&simple_cont);
+                        match op {
+                            DebugAssignOp(AssignOp::AssignConstraintSignal) => {
+                                let cont = SymbolicValue::AssignEq(Rc::new(lhs), Rc::new(rhs));
+                                self.cur_state.push_trace_constraint(&cont);
+
+                                let simple_cont = SymbolicValue::BinaryOp(
+                                    Rc::new(simple_lhs),
+                                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+                                    Rc::new(simple_rhs),
+                                );
+                                self.cur_state.push_side_constraint(&simple_cont);
+                            }
+                            DebugAssignOp(AssignOp::AssignSignal) => {
+                                let cont = SymbolicValue::Assign(Rc::new(lhs), Rc::new(rhs));
+                                self.cur_state.push_trace_constraint(&cont);
+                            }
+                            _ => {}
                         }
                     }
+
                     self.execute(statements, cur_bid + 1);
                 }
                 DebugStatement::ConstraintEquality { meta, lhe, rhe } => {
@@ -995,7 +988,19 @@ impl<'a> SymbolicExecutor<'a> {
                     {
                         if let Some(typ) = template.var2type.get(&sname.name) {
                             if let VariableType::Signal(SignalType::Output, _) = typ {
-                                return symval.clone();
+                                if self.setting.substitute_output {
+                                    return (*self
+                                        .cur_state
+                                        .get_symval(&sname)
+                                        .cloned()
+                                        .unwrap_or_else(|| {
+                                            Rc::new(SymbolicValue::Variable(sname.clone()))
+                                        })
+                                        .clone())
+                                    .clone();
+                                } else {
+                                    return symval.clone();
+                                }
                             } else if let VariableType::Var = typ {
                                 return (*self
                                     .cur_state
@@ -1039,6 +1044,9 @@ impl<'a> SymbolicExecutor<'a> {
                             }
                             ExpressionInfixOpcode::Mul => {
                                 SymbolicValue::ConstantInt((lv * rv) % &self.setting.prime)
+                            }
+                            ExpressionInfixOpcode::Pow => {
+                                SymbolicValue::ConstantInt(modpow(lv, rv, &self.setting.prime))
                             }
                             ExpressionInfixOpcode::Div => {
                                 if rv.is_zero() {
