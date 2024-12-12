@@ -13,19 +13,18 @@ use rand::Rng;
 use rustc_hash::FxHashMap;
 use std::str::FromStr;
 
-use crate::symbolic_execution::SymbolicExecutor;
-use crate::symbolic_value::SymbolicName;
-use crate::symbolic_value::SymbolicValue;
+use crate::executor::symbolic_execution::SymbolicExecutor;
+use crate::executor::symbolic_value::{SymbolicName, SymbolicValue, SymbolicValueRef};
 
 use crate::solver::utils::{
-    count_satisfied_constraints, emulate_symbolic_values, extract_variables, is_vulnerable,
-    verify_assignment, CounterExample, VerificationSetting,
+    count_satisfied_constraints, emulate_symbolic_values, evaluate_constraints, extract_variables,
+    is_vulnerable, verify_assignment, CounterExample, VerificationResult, VerificationSetting,
 };
 
 pub fn mutation_test_search(
     sexe: &mut SymbolicExecutor,
-    trace_constraints: &Vec<Rc<SymbolicValue>>,
-    side_constraints: &Vec<Rc<SymbolicValue>>,
+    trace_constraints: &Vec<SymbolicValueRef>,
+    side_constraints: &Vec<SymbolicValueRef>,
     setting: &VerificationSetting,
 ) -> Option<CounterExample> {
     // Parameters
@@ -71,7 +70,7 @@ pub fn mutation_test_search(
         let input_population =
             initialize_input_population(&input_variables, input_population_size, &mut rng);
 
-        let mut new_trace_population = Vec::new();
+        let mut new_trace_population = vec![FxHashMap::default()];
         for _ in 0..program_population_size {
             let parent1 = trace_selection(&trace_population, &mut rng);
             let parent2 = trace_selection(&trace_population, &mut rng);
@@ -125,7 +124,7 @@ pub fn mutation_test_search(
             &input_population,
         );
 
-        if best_score.1 == 1.0 {
+        if best_score.1 >= 1.0 {
             let mut mutated_trace_constraints = trace_constraints.clone();
             for (k, v) in best_mutated_trace {
                 if let SymbolicValue::Assign(lv, rv) =
@@ -156,6 +155,13 @@ pub fn mutation_test_search(
                     println!("\n └─ Solution found in generation {}", generation);
                     return Some(CounterExample {
                         flag: flag,
+                        assignment: assignment.clone(),
+                    });
+                }
+            } else {
+                if evaluate_constraints(&setting.prime, side_constraints, &assignment) {
+                    return Some(CounterExample {
+                        flag: VerificationResult::UnderConstrained,
                         assignment: assignment.clone(),
                     });
                 }
@@ -190,10 +196,17 @@ fn initialize_input_population(
                 .map(|var| {
                     (
                         var.clone(),
-                        rng.gen_bigint_range(
-                            &(BigInt::from_str("2").unwrap() * -BigInt::one()),
-                            &(BigInt::from_str("2").unwrap() * BigInt::one()),
-                        ),
+                        if rng.gen::<bool>() {
+                            rng.gen_bigint_range(
+                                &(BigInt::from_str("2").unwrap() * -BigInt::one()),
+                                &(BigInt::from_str("2").unwrap()),
+                            )
+                        } else {
+                            rng.gen_bigint_range(
+                                &(BigInt::from_str("12").unwrap()),
+                                &(BigInt::from_str("22").unwrap()),
+                            )
+                        },
                     )
                 })
                 .collect()
@@ -214,7 +227,7 @@ fn initialize_trace_mutation(
                         p.clone(),
                         SymbolicValue::ConstantInt(rng.gen_bigint_range(
                             &(BigInt::from_str("2").unwrap() * -BigInt::one()),
-                            &(BigInt::from_str("2").unwrap() * BigInt::one()),
+                            &(BigInt::from_str("2").unwrap()),
                         )),
                     )
                 })
@@ -241,28 +254,34 @@ fn trace_crossover(
             if rng.gen::<bool>() {
                 (var.clone(), val.clone())
             } else {
-                (var.clone(), parent2[var].clone())
+                if parent2.contains_key(var) {
+                    (var.clone(), parent2[var].clone())
+                } else {
+                    (var.clone(), val.clone())
+                }
             }
         })
         .collect()
 }
 
 fn trace_mutate(individual: &mut FxHashMap<usize, SymbolicValue>, rng: &mut ThreadRng) {
-    let var = individual.keys().choose(rng).unwrap();
-    individual.insert(
-        var.clone(),
-        SymbolicValue::ConstantInt(rng.gen_bigint_range(
-            &(BigInt::from_str("2").unwrap() * -BigInt::one()),
-            &(BigInt::from_str("2").unwrap() * BigInt::one()),
-        )),
-    );
+    if !individual.is_empty() {
+        let var = individual.keys().choose(rng).unwrap();
+        individual.insert(
+            var.clone(),
+            SymbolicValue::ConstantInt(rng.gen_bigint_range(
+                &(BigInt::from_str("2").unwrap() * -BigInt::one()),
+                &(BigInt::from_str("2").unwrap()),
+            )),
+        );
+    }
 }
 
 fn trace_fitness(
     sexe: &mut SymbolicExecutor,
     setting: &VerificationSetting,
-    trace_constraints: &Vec<Rc<SymbolicValue>>,
-    side_constraints: &Vec<Rc<SymbolicValue>>,
+    trace_constraints: &Vec<SymbolicValueRef>,
+    side_constraints: &Vec<SymbolicValueRef>,
     trace_mutation: &FxHashMap<usize, SymbolicValue>,
     inputs: &Vec<FxHashMap<SymbolicName, BigInt>>,
 ) -> (usize, f64) {
@@ -280,21 +299,27 @@ fn trace_fitness(
     let mut max_score = 0 as f64;
     for (i, inp) in inputs.iter().enumerate() {
         let mut assignment = inp.clone();
-        if emulate_symbolic_values(&setting.prime, &mutated_trace_constraints, &mut assignment) {
+        let is_success =
+            emulate_symbolic_values(&setting.prime, &mutated_trace_constraints, &mut assignment);
+        {
             let satisfied_side =
                 count_satisfied_constraints(&setting.prime, side_constraints, &assignment);
             let mut side_ratio = satisfied_side as f64 / side_constraints.len() as f64;
 
             if side_ratio == 1.0 as f64 {
-                let flag = verify_assignment(
-                    sexe,
-                    trace_constraints,
-                    side_constraints,
-                    &assignment,
-                    setting,
-                );
-                if !is_vulnerable(&flag) {
-                    side_ratio = 0.9;
+                if is_success {
+                    let flag = verify_assignment(
+                        sexe,
+                        trace_constraints,
+                        side_constraints,
+                        &assignment,
+                        setting,
+                    );
+                    if !is_vulnerable(&flag) {
+                        side_ratio = 0.9;
+                    } else {
+                        side_ratio = 1.1;
+                    }
                 }
             }
 

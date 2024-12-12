@@ -7,7 +7,9 @@ use std::rc::Rc;
 
 use program_structure::ast::{ExpressionInfixOpcode, SignalType, Statement, VariableType};
 
-use crate::debug_ast::{DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode, DebugStatement};
+use crate::executor::debug_ast::{
+    DebugExpression, DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode, DebugStatement,
+};
 
 /// Represents the access type within a symbolic expression, such as component or array access.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -48,6 +50,7 @@ impl SymbolicAccess {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct OwnerName {
     pub name: usize,
+    pub access: Option<Vec<SymbolicAccess>>,
     pub counter: usize,
 }
 
@@ -64,7 +67,20 @@ impl SymbolicName {
             "{}.{}{}",
             self.owner
                 .iter()
-                .map(|e: &OwnerName| lookup[&e.name].clone())
+                .map(|e: &OwnerName| {
+                    let access_str = if e.access.is_none() {
+                        ""
+                    } else {
+                        &e.access
+                            .clone()
+                            .unwrap()
+                            .iter()
+                            .map(|s: &SymbolicAccess| s.lookup_fmt(lookup))
+                            .collect::<Vec<_>>()
+                            .join("")
+                    };
+                    lookup[&e.name].clone() + &access_str
+                })
                 .collect::<Vec<_>>()
                 .join("."),
             lookup[&self.name].clone(),
@@ -90,19 +106,19 @@ pub enum SymbolicValue {
     ConstantInt(BigInt),
     ConstantBool(bool),
     Variable(SymbolicName),
-    Assign(Rc<SymbolicValue>, Rc<SymbolicValue>),
-    AssignEq(Rc<SymbolicValue>, Rc<SymbolicValue>),
+    Assign(SymbolicValueRef, SymbolicValueRef),
+    AssignEq(SymbolicValueRef, SymbolicValueRef),
     BinaryOp(
-        Rc<SymbolicValue>,
+        SymbolicValueRef,
         DebugExpressionInfixOpcode,
-        Rc<SymbolicValue>,
+        SymbolicValueRef,
     ),
-    Conditional(Rc<SymbolicValue>, Rc<SymbolicValue>, Rc<SymbolicValue>),
-    UnaryOp(DebugExpressionPrefixOpcode, Rc<SymbolicValue>),
-    Array(Vec<Rc<SymbolicValue>>),
-    Tuple(Vec<Rc<SymbolicValue>>),
-    UniformArray(Rc<SymbolicValue>, Rc<SymbolicValue>),
-    Call(usize, Vec<Rc<SymbolicValue>>),
+    Conditional(SymbolicValueRef, SymbolicValueRef, SymbolicValueRef),
+    UnaryOp(DebugExpressionPrefixOpcode, SymbolicValueRef),
+    Array(Vec<SymbolicValueRef>),
+    Tuple(Vec<SymbolicValueRef>),
+    UniformArray(SymbolicValueRef, SymbolicValueRef),
+    Call(usize, Vec<SymbolicValueRef>),
 }
 
 impl SymbolicValue {
@@ -220,14 +236,18 @@ impl SymbolicValue {
     }
 }
 
+pub type SymbolicValueRef = Rc<SymbolicValue>;
+
 /// Represents a symbolic template used in the symbolic execution process.
 #[derive(Default, Clone)]
 pub struct SymbolicTemplate {
     pub template_parameter_names: Vec<usize>,
     pub inputs: FxHashSet<usize>,
+    pub input_dimensions: FxHashMap<usize, Vec<DebugExpression>>,
     pub outputs: FxHashSet<usize>,
     pub var2type: FxHashMap<usize, VariableType>,
     pub body: Vec<DebugStatement>,
+    pub require_bound_check: bool,
 }
 
 /// Represents a symbolic function used in the symbolic execution process.
@@ -241,8 +261,8 @@ pub struct SymbolicFunction {
 #[derive(Default, Clone)]
 pub struct SymbolicComponent {
     pub template_name: usize,
-    pub args: Vec<Rc<SymbolicValue>>,
-    pub inputs: FxHashMap<usize, Option<SymbolicValue>>,
+    pub args: Vec<SymbolicValueRef>,
+    pub inputs: FxHashMap<SymbolicName, Option<SymbolicValue>>,
     pub is_done: bool,
 }
 
@@ -271,15 +291,21 @@ impl SymbolicLibrary {
     /// * `name` - Name under which the template will be registered within the library.
     /// * `body` - Block statement serving as the main logic body defining the behavior captured by the template.
     /// * `template_parameter_names` - List of names identifying parameters used within the template logic.
-    pub fn register_library(
+    pub fn register_template(
         &mut self,
         name: String,
         body: &Statement,
         template_parameter_names: &Vec<String>,
     ) {
         let mut inputs = FxHashSet::default();
+        let mut input_dimensions = FxHashMap::default();
         let mut outputs = FxHashSet::default();
         let mut var2type: FxHashMap<usize, VariableType> = FxHashMap::default();
+
+        let require_bound_check = &name == "LessThan"
+            || &name == "LessEqThan"
+            || &name == "GreaterThan"
+            || &name == "GreaterEqThan";
 
         let i = if let Some(i) = self.name2id.get(&name) {
             *i
@@ -298,12 +324,19 @@ impl SymbolicLibrary {
                     } = &s
                     {
                         for init in initializations {
-                            if let DebugStatement::Declaration { name, xtype, .. } = &init {
+                            if let DebugStatement::Declaration {
+                                name,
+                                xtype,
+                                dimensions,
+                                ..
+                            } = &init
+                            {
                                 var2type.insert(name.clone(), xtype.clone());
                                 if let VariableType::Signal(typ, _taglist) = &xtype {
                                     match typ {
                                         SignalType::Input => {
                                             inputs.insert(*name);
+                                            input_dimensions.insert(*name, dimensions.clone());
                                         }
                                         SignalType::Output => {
                                             outputs.insert(*name);
@@ -329,9 +362,11 @@ impl SymbolicLibrary {
                     .map(|p: &String| self.name2id[p])
                     .collect::<Vec<_>>(),
                 inputs: inputs,
+                input_dimensions: input_dimensions,
                 outputs: outputs,
                 var2type: var2type,
                 body: vec![dbody.clone(), DebugStatement::Ret],
+                require_bound_check: require_bound_check,
             }),
         );
     }

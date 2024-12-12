@@ -1,6 +1,5 @@
 use std::fmt;
 use std::io::Write;
-use std::rc::Rc;
 
 use colored::Colorize;
 use num_bigint_dig::BigInt;
@@ -13,10 +12,9 @@ use program_structure::ast::Expression;
 use program_structure::ast::ExpressionInfixOpcode;
 use program_structure::ast::ExpressionPrefixOpcode;
 
-use crate::symbolic_execution::SymbolicExecutor;
-use crate::symbolic_value::SymbolicName;
-use crate::symbolic_value::{OwnerName, SymbolicValue};
-use crate::utils::extended_euclidean;
+use crate::executor::symbolic_execution::SymbolicExecutor;
+use crate::executor::symbolic_value::{OwnerName, SymbolicName, SymbolicValue, SymbolicValueRef};
+use crate::executor::utils::extended_euclidean;
 
 /// Represents the result of a constraint verification process.
 pub enum VerificationResult {
@@ -121,7 +119,7 @@ pub struct VerificationSetting {
 ///
 /// # Returns
 /// A vector of unique `SymbolicName`s referenced in the constraints.
-pub fn extract_variables(constraints: &[Rc<SymbolicValue>]) -> Vec<SymbolicName> {
+pub fn extract_variables(constraints: &[SymbolicValueRef]) -> Vec<SymbolicName> {
     let mut variables = FxHashSet::default();
     for constraint in constraints {
         extract_variables_from_symbolic_value(constraint, &mut variables);
@@ -175,7 +173,7 @@ pub fn extract_variables_from_symbolic_value(
 }
 
 pub fn get_dependency_graph(
-    values: &[Rc<SymbolicValue>],
+    values: &[SymbolicValueRef],
     graph: &mut FxHashMap<SymbolicName, FxHashSet<SymbolicName>>,
 ) {
     for value in values {
@@ -230,7 +228,7 @@ pub fn get_dependency_graph(
 /// `true` if all constraints are satisfied, `false` otherwise.
 pub fn evaluate_constraints(
     prime: &BigInt,
-    constraints: &[Rc<SymbolicValue>],
+    constraints: &[SymbolicValueRef],
     assignment: &FxHashMap<SymbolicName, BigInt>,
 ) -> bool {
     constraints.iter().all(|constraint| {
@@ -253,7 +251,7 @@ pub fn evaluate_constraints(
 /// The number of satisfied constraints.
 pub fn count_satisfied_constraints(
     prime: &BigInt,
-    constraints: &[Rc<SymbolicValue>],
+    constraints: &[SymbolicValueRef],
     assignment: &FxHashMap<SymbolicName, BigInt>,
 ) -> usize {
     constraints
@@ -270,14 +268,15 @@ pub fn count_satisfied_constraints(
 
 pub fn emulate_symbolic_values(
     prime: &BigInt,
-    values: &[Rc<SymbolicValue>],
+    values: &[SymbolicValueRef],
     assignment: &mut FxHashMap<SymbolicName, BigInt>,
 ) -> bool {
+    let mut success = true;
     for value in values {
         match value.as_ref() {
             SymbolicValue::ConstantBool(b) => {
                 if !b {
-                    return false;
+                    success = false;
                 }
             }
             SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
@@ -317,7 +316,7 @@ pub fn emulate_symbolic_values(
                     _ => panic!("Unassigned variables exist"),
                 };
                 if !flag {
-                    return false;
+                    success = false;
                 }
             }
             SymbolicValue::UnaryOp(op, expr) => {
@@ -330,13 +329,13 @@ pub fn emulate_symbolic_values(
                     _ => panic!("Non-Boolean Operation"),
                 };
                 if !flag {
-                    return false;
+                    success = false;
                 }
             }
             _ => panic!("Non-Supported SymbolicValue"),
         }
     }
-    return true;
+    return success;
 }
 
 /// Evaluates a symbolic value given a variable assignment.
@@ -458,8 +457,8 @@ pub fn evaluate_symbolic_value(
 
 pub fn verify_assignment(
     sexe: &mut SymbolicExecutor,
-    trace_constraints: &[Rc<SymbolicValue>],
-    side_constraints: &[Rc<SymbolicValue>],
+    trace_constraints: &[SymbolicValueRef],
+    side_constraints: &[SymbolicValueRef],
     assignment: &FxHashMap<SymbolicName, BigInt>,
     setting: &VerificationSetting,
 ) -> VerificationResult {
@@ -473,6 +472,7 @@ pub fn verify_assignment(
         sexe.cur_state.add_owner(&OwnerName {
             name: sexe.symbolic_library.name2id["main"],
             counter: 0,
+            access: None,
         });
         sexe.feed_arguments(
             &setting.template_param_names,
