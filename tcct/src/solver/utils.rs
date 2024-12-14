@@ -16,9 +16,15 @@ use crate::executor::symbolic_execution::SymbolicExecutor;
 use crate::executor::symbolic_value::{OwnerName, SymbolicName, SymbolicValue, SymbolicValueRef};
 use crate::executor::utils::extended_euclidean;
 
+pub enum UnderConstrainedType {
+    UnusedOutput,
+    Deterministic,
+    NonDeterministic,
+}
+
 /// Represents the result of a constraint verification process.
 pub enum VerificationResult {
-    UnderConstrained,
+    UnderConstrained(UnderConstrainedType),
     OverConstrained,
     WellConstrained,
 }
@@ -30,7 +36,17 @@ impl fmt::Display for VerificationResult {
     /// A `fmt::Result` indicating success or failure of the formatting
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let output = match self {
-            VerificationResult::UnderConstrained => "🔥 UnderConstrained 🔥".red().bold(),
+            VerificationResult::UnderConstrained(typ) => match typ {
+                UnderConstrainedType::UnusedOutput => {
+                    "👻 UnderConstrained (Unused-Output) 👻".red().bold()
+                }
+                UnderConstrainedType::Deterministic => {
+                    "🧟 UnderConstrained (Deterministic) 🧟".red().bold()
+                }
+                UnderConstrainedType::NonDeterministic => {
+                    "🔥 UnderConstrained (Non-Deterministic) 🔥".red().bold()
+                }
+            },
             VerificationResult::OverConstrained => "💣 OverConstrained 💣".yellow().bold(),
             VerificationResult::WellConstrained => "✅ WellConstrained ✅".green().bold(),
         };
@@ -96,7 +112,7 @@ impl CounterExample {
 /// `true` if the result indicates a vulnerability, `false` otherwise.
 pub fn is_vulnerable(vr: &VerificationResult) -> bool {
     match vr {
-        VerificationResult::UnderConstrained => true,
+        VerificationResult::UnderConstrained(_) => true,
         VerificationResult::OverConstrained => true,
         VerificationResult::WellConstrained => false,
     }
@@ -507,7 +523,7 @@ pub fn verify_assignment(
         }
 
         if flag {
-            return VerificationResult::UnderConstrained;
+            return VerificationResult::UnderConstrained(UnderConstrainedType::NonDeterministic);
         } else {
             return VerificationResult::WellConstrained;
         }

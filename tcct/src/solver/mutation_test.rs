@@ -6,6 +6,7 @@ use std::rc::Rc;
 use num_bigint_dig::BigInt;
 use num_bigint_dig::RandBigInt;
 use num_traits::One;
+use num_traits::Zero;
 use rand::rngs::ThreadRng;
 use rand::seq::IteratorRandom;
 use rand::seq::SliceRandom;
@@ -14,11 +15,14 @@ use rustc_hash::FxHashMap;
 use std::str::FromStr;
 
 use crate::executor::symbolic_execution::SymbolicExecutor;
-use crate::executor::symbolic_value::{SymbolicName, SymbolicValue, SymbolicValueRef};
+use crate::executor::symbolic_value::{
+    register_array_elements, OwnerName, SymbolicName, SymbolicValue, SymbolicValueRef,
+};
 
 use crate::solver::utils::{
     count_satisfied_constraints, emulate_symbolic_values, evaluate_constraints, extract_variables,
-    is_vulnerable, verify_assignment, CounterExample, VerificationResult, VerificationSetting,
+    is_vulnerable, verify_assignment, CounterExample, UnderConstrainedType, VerificationResult,
+    VerificationSetting,
 };
 
 pub fn mutation_test_search(
@@ -28,8 +32,8 @@ pub fn mutation_test_search(
     setting: &VerificationSetting,
 ) -> Option<CounterExample> {
     // Parameters
-    let program_population_size = 10;
-    let input_population_size = 100;
+    let program_population_size = 100;
+    let input_population_size = 30;
     let max_generations = 100;
     let mutation_rate = 0.3;
     let crossover_rate = 0.5;
@@ -45,26 +49,28 @@ pub fn mutation_test_search(
             _ => {}
         }
     }
-    if assign_pos.is_empty() {
-        return None;
-    }
-    let mut trace_population =
-        initialize_trace_mutation(&assign_pos, program_population_size, setting, &mut rng);
 
     // Initial Pupulation of Mutated Inputs
     let mut variables = extract_variables(trace_constraints);
     variables.append(&mut extract_variables(side_constraints));
     let variables_set: HashSet<SymbolicName> = variables.iter().cloned().collect();
-    variables = variables_set.into_iter().collect();
+    //variables = variables_set.into_iter().collect();
     let mut input_variables = Vec::new();
-    for v in variables {
+    for v in variables_set.iter() {
         if sexe.symbolic_library.template_library[&sexe.symbolic_library.name2id[&setting.id]]
             .inputs
             .contains(&v.name)
         {
-            input_variables.push(v);
+            input_variables.push(v.clone());
         }
     }
+
+    if assign_pos.is_empty() {
+        return None;
+    }
+
+    let mut trace_population =
+        initialize_trace_mutation(&assign_pos, program_population_size, setting, &mut rng);
 
     for generation in 0..max_generations {
         let input_population = initialize_input_population(
@@ -165,7 +171,9 @@ pub fn mutation_test_search(
             } else {
                 if evaluate_constraints(&setting.prime, side_constraints, &assignment) {
                     return Some(CounterExample {
-                        flag: VerificationResult::UnderConstrained,
+                        flag: VerificationResult::UnderConstrained(
+                            UnderConstrainedType::Deterministic,
+                        ),
                         assignment: assignment.clone(),
                     });
                 }

@@ -19,8 +19,8 @@ use crate::executor::debug_ast::{
     DebugExpressionPrefixOpcode, DebugStatement, DebugVariableType,
 };
 use crate::executor::symbolic_value::{
-    access_multidimensional_array, OwnerName, SymbolicAccess, SymbolicComponent, SymbolicLibrary,
-    SymbolicName, SymbolicValue, SymbolicValueRef,
+    access_multidimensional_array, register_array_elements, OwnerName, SymbolicAccess,
+    SymbolicComponent, SymbolicLibrary, SymbolicName, SymbolicValue, SymbolicValueRef,
 };
 use crate::executor::utils::{extended_euclidean, italic, modpow};
 
@@ -760,7 +760,7 @@ impl<'a> SymbolicExecutor<'a> {
                                 }
 
                                 // Initialize template-inputs
-                                let mut comp_inputs: FxHashMap<
+                                let mut inputs_of_component: FxHashMap<
                                     SymbolicName,
                                     Option<SymbolicValue>,
                                 > = FxHashMap::default();
@@ -769,81 +769,17 @@ impl<'a> SymbolicExecutor<'a> {
                                     .inputs
                                     .clone()
                                 {
-                                    let template_library = &self.symbolic_library.template_library;
-                                    let dims = template_library[&callee_name].input_dimensions
-                                        [&inp_name]
-                                        .clone()
-                                        .iter()
-                                        .map(|arg0: &DebugExpression| {
-                                            let evaled_arg0 = self.evaluate_expression(arg0);
-                                            let folded_arg0 =
-                                                self.fold_variables(&evaled_arg0, false);
-                                            if let SymbolicValue::ConstantInt(bint) = &folded_arg0 {
-                                                bint.to_usize().unwrap()
-                                            } else {
-                                                panic!("Undetermined dimension: {:?}", folded_arg0)
-                                            }
-                                        })
-                                        .collect::<Vec<_>>();
-
-                                    let mut positions = vec![vec![]];
-                                    for size in dims {
-                                        let mut new_positions = vec![];
-                                        for combination in &positions {
-                                            for i in 0..size {
-                                                let mut new_combination = combination.clone();
-                                                new_combination.push(i);
-                                                new_positions.push(new_combination);
-                                            }
-                                        }
-                                        positions = new_positions;
-                                    }
-
-                                    if positions.is_empty() {
-                                        comp_inputs.insert(
-                                            SymbolicName {
-                                                name: inp_name.clone(),
-                                                owner: Rc::new(Vec::new()),
-                                                access: None,
-                                            },
-                                            None,
-                                        );
-                                    } else {
-                                        for p in positions {
-                                            if p.is_empty() {
-                                                comp_inputs.insert(
-                                                    SymbolicName {
-                                                        name: inp_name.clone(),
-                                                        owner: Rc::new(Vec::new()),
-                                                        access: None,
-                                                    },
-                                                    None,
-                                                );
-                                            } else {
-                                                comp_inputs.insert(
-                                                    SymbolicName {
-                                                        name: inp_name.clone(),
-                                                        owner: Rc::new(Vec::new()),
-                                                        access: Some(
-                                                            p.iter()
-                                                                .map(|arg0: &usize| {
-                                                                    SymbolicAccess::ArrayAccess(
-                                                                        SymbolicValue::ConstantInt(
-                                                                            BigInt::from_usize(
-                                                                                *arg0,
-                                                                            )
-                                                                            .unwrap(),
-                                                                        ),
-                                                                    )
-                                                                })
-                                                                .collect::<Vec<_>>(),
-                                                        ),
-                                                    },
-                                                    None,
-                                                );
-                                            }
-                                        }
-                                    }
+                                    let dims = self.evaluate_dimension(
+                                        &self.symbolic_library.template_library[&callee_name]
+                                            .input_dimensions[&inp_name]
+                                            .clone(),
+                                    );
+                                    register_array_elements(
+                                        *inp_name,
+                                        &dims,
+                                        None,
+                                        &mut inputs_of_component,
+                                    );
                                 }
 
                                 // Restore the overwritten variables
@@ -854,7 +790,7 @@ impl<'a> SymbolicExecutor<'a> {
                                 let c = SymbolicComponent {
                                     template_name: callee_name.clone(),
                                     args: args.clone(),
-                                    inputs: comp_inputs,
+                                    inputs: inputs_of_component,
                                     is_done: false,
                                 };
 
@@ -1203,6 +1139,20 @@ impl<'a> SymbolicExecutor<'a> {
                 SymbolicAccess::ArrayAccess(self.fold_variables(&tmp_e, false))
             }
         }
+    }
+
+    pub fn evaluate_dimension(&mut self, dims: &Vec<DebugExpression>) -> Vec<usize> {
+        dims.iter()
+            .map(|arg0: &DebugExpression| {
+                let evaled_arg0 = self.evaluate_expression(arg0);
+                let folded_arg0 = self.fold_variables(&evaled_arg0, false);
+                if let SymbolicValue::ConstantInt(bint) = &folded_arg0 {
+                    bint.to_usize().unwrap()
+                } else {
+                    panic!("Undetermined dimension: {:?}", folded_arg0)
+                }
+            })
+            .collect::<Vec<_>>()
     }
 
     /// Folds variables in a symbolic expression, potentially simplifying it.
