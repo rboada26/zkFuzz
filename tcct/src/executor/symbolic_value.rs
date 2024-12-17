@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -194,7 +195,7 @@ impl SymbolicValue {
             },
             SymbolicValue::Conditional(cond, if_branch, else_branch) => {
                 format!(
-                    "({} {} {})",
+                    "(🤔 {} ? {} : {})",
                     cond.lookup_fmt(lookup),
                     if_branch.lookup_fmt(lookup),
                     else_branch.lookup_fmt(lookup)
@@ -251,7 +252,7 @@ pub struct SymbolicTemplate {
     pub outputs: FxHashSet<usize>,
     pub var2type: FxHashMap<usize, VariableType>,
     pub body: Vec<DebugStatement>,
-    pub require_bound_check: bool,
+    pub is_lessthan: bool,
 }
 
 /// Represents a symbolic function used in the symbolic execution process.
@@ -307,16 +308,13 @@ impl SymbolicLibrary {
         let mut outputs = FxHashSet::default();
         let mut var2type: FxHashMap<usize, VariableType> = FxHashMap::default();
 
-        let require_bound_check = &name == "LessThan"
-            || &name == "LessEqThan"
-            || &name == "GreaterThan"
-            || &name == "GreaterEqThan";
+        let is_lessthan = &name == "LessThan";
 
         let i = if let Some(i) = self.name2id.get(&name) {
             *i
         } else {
             self.name2id.insert(name.clone(), self.name2id.len());
-            self.id2name.insert(self.name2id[&name], name);
+            self.id2name.insert(self.name2id[&name], name.clone());
             self.name2id.len() - 1
         };
 
@@ -365,7 +363,15 @@ impl SymbolicLibrary {
             Box::new(SymbolicTemplate {
                 template_parameter_names: template_parameter_names
                     .iter()
-                    .map(|p: &String| self.name2id[p])
+                    .map(|p: &String| {
+                        if let Some(i) = self.name2id.get(p) {
+                            *i
+                        } else {
+                            self.name2id.insert(p.clone(), self.name2id.len());
+                            self.id2name.insert(self.name2id[p], name.clone());
+                            self.name2id.len() - 1
+                        }
+                    })
                     .collect::<Vec<_>>(),
                 inputs: inputs,
                 input_dimensions: input_dimensions,
@@ -373,7 +379,7 @@ impl SymbolicLibrary {
                 outputs: outputs,
                 var2type: var2type,
                 body: vec![dbody.clone(), DebugStatement::Ret],
-                require_bound_check: require_bound_check,
+                is_lessthan: is_lessthan,
             }),
         );
     }
@@ -433,7 +439,8 @@ pub fn access_multidimensional_array(
                 panic!("Out of range");
             }
         } else {
-            panic!("dims should be a list of SymbolicAccess::ArrayAccess");
+            //panic!("dims should be a list of SymbolicAccess::ArrayAccess");
+            return SymbolicValue::Array(current_values);
         }
     }
     panic!("Incomplete dimensions");
@@ -531,5 +538,36 @@ pub fn register_array_elements<T>(
                 );
             }
         }
+    }
+}
+
+pub fn enumerate_array(value: &SymbolicValue) -> Vec<(Vec<usize>, &SymbolicValue)> {
+    let mut result = Vec::new();
+    let mut queue = VecDeque::new();
+    queue.push_back((Vec::new(), value));
+
+    while let Some((index, val)) = queue.pop_front() {
+        match val {
+            SymbolicValue::Array(arr) => {
+                for (i, item) in arr.iter().enumerate() {
+                    let mut new_index = index.clone();
+                    new_index.push(i);
+                    queue.push_back((new_index, item));
+                }
+            }
+            _ => {
+                result.push((index, val));
+            }
+        }
+    }
+
+    result
+}
+
+pub fn is_true(val: &SymbolicValue) -> bool {
+    if let SymbolicValue::ConstantBool(true) = val {
+        true
+    } else {
+        false
     }
 }

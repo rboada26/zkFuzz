@@ -6,6 +6,7 @@ use log::{error, trace, warn};
 use num_bigint_dig::BigInt;
 use num_traits::cast::ToPrimitive;
 use num_traits::FromPrimitive;
+use num_traits::One;
 use num_traits::{Signed, Zero};
 use rustc_hash::FxHashMap;
 
@@ -19,8 +20,9 @@ use crate::executor::debug_ast::{
     DebugExpressionPrefixOpcode, DebugStatement, DebugVariableType,
 };
 use crate::executor::symbolic_value::{
-    access_multidimensional_array, register_array_elements, OwnerName, SymbolicAccess,
-    SymbolicComponent, SymbolicLibrary, SymbolicName, SymbolicValue, SymbolicValueRef,
+    access_multidimensional_array, enumerate_array, is_true, register_array_elements, OwnerName,
+    SymbolicAccess, SymbolicComponent, SymbolicLibrary, SymbolicName, SymbolicValue,
+    SymbolicValueRef,
 };
 use crate::executor::utils::{extended_euclidean, italic, modpow};
 
@@ -30,6 +32,7 @@ use crate::executor::utils::{extended_euclidean, italic, modpow};
 pub struct SymbolicState {
     pub owner_name: Rc<Vec<OwnerName>>,
     pub template_id: usize,
+    pub is_within_initialization_block: bool,
     depth: usize,
     pub values: FxHashMap<SymbolicName, SymbolicValueRef>,
     pub trace_constraints: Vec<SymbolicValueRef>,
@@ -46,6 +49,7 @@ impl SymbolicState {
         SymbolicState {
             owner_name: Rc::new(Vec::new()),
             template_id: usize::MAX,
+            is_within_initialization_block: false,
             depth: 0_usize,
             values: FxHashMap::default(),
             trace_constraints: Vec::new(),
@@ -261,9 +265,11 @@ impl SymbolicStore {
     }
 }
 
+#[derive(Clone)]
 pub struct SymbolicExecutorSetting {
     pub prime: BigInt,
     pub propagate_substitution: bool,
+    pub only_initialization_blocks: bool,
     pub skip_initialization_blocks: bool,
     pub off_trace: bool,
     pub keep_track_constraints: bool,
@@ -369,13 +375,15 @@ impl<'a> SymbolicExecutor<'a> {
                 &mut name2id,
                 &mut id2name,
             ));
+            let simplified_a =
+                self.simplify_variables(&evaled_a, !self.setting.propagate_substitution);
             self.cur_state.set_symval(
                 SymbolicName {
                     name: name2id[n],
                     owner: self.cur_state.owner_name.clone(),
                     access: None,
                 },
-                evaled_a,
+                simplified_a,
             );
         }
     }
@@ -517,6 +525,18 @@ impl<'a> SymbolicExecutor<'a> {
             self.symbolic_store.max_depth =
                 max(self.symbolic_store.max_depth, self.cur_state.get_depth());
 
+            if self.setting.only_initialization_blocks {
+                match &statements[cur_bid] {
+                    DebugStatement::InitializationBlock { .. } | DebugStatement::Block { .. } => {}
+                    _ => {
+                        if !self.cur_state.is_within_initialization_block {
+                            self.execute(statements, cur_bid + 1);
+                            return;
+                        }
+                    }
+                }
+            }
+
             match &statements[cur_bid] {
                 DebugStatement::InitializationBlock {
                     initializations,
@@ -527,12 +547,13 @@ impl<'a> SymbolicExecutor<'a> {
                     if let VariableType::Signal(SignalType::Input, _taglist) = &xtype {
                         is_input = true;
                     }
-
+                    self.cur_state.is_within_initialization_block = true;
                     if !(self.setting.skip_initialization_blocks && is_input) {
                         for init in initializations {
                             self.execute(&vec![init.clone()], 0);
                         }
                     }
+                    self.cur_state.is_within_initialization_block = false;
                     self.symbolic_store.block_end_states = vec![self.cur_state.clone()];
                     self.expand_all_stack_states(
                         statements,
@@ -558,9 +579,9 @@ impl<'a> SymbolicExecutor<'a> {
                 } => {
                     self.trace_if_enabled(&meta);
                     let tmp_cond = self.evaluate_expression(cond);
-                    let original_evaled_condition = self.fold_variables(&tmp_cond, true);
+                    let original_evaled_condition = self.simplify_variables(&tmp_cond, true);
                     let evaled_condition =
-                        self.fold_variables(&tmp_cond, !self.setting.propagate_substitution);
+                        self.simplify_variables(&tmp_cond, !self.setting.propagate_substitution);
 
                     // Save the current state
                     let cur_depth = self.cur_state.get_depth();
@@ -579,7 +600,7 @@ impl<'a> SymbolicExecutor<'a> {
                             );
                         }
                     } else {
-                        if self.setting.keep_track_constraints {
+                        if self.setting.keep_track_constraints && (!is_true(&evaled_condition)) {
                             if_state.push_trace_constraint(&evaled_condition);
                             if_state.push_side_constraint(&original_evaled_condition);
                         }
@@ -618,7 +639,8 @@ impl<'a> SymbolicExecutor<'a> {
                             );
                         }
                     } else {
-                        if self.setting.keep_track_constraints {
+                        if self.setting.keep_track_constraints && (!is_true(&neg_evaled_condition))
+                        {
                             else_state.push_trace_constraint(&neg_evaled_condition);
                             else_state.push_side_constraint(&original_neg_evaled_condition);
                         }
@@ -642,7 +664,7 @@ impl<'a> SymbolicExecutor<'a> {
                     // Symbolic execution of loops is complex. This is a simplified approach.
                     let tmp_cond = self.evaluate_expression(cond);
                     let evaled_condition =
-                        self.fold_variables(&tmp_cond, !self.setting.propagate_substitution);
+                        self.simplify_variables(&tmp_cond, !self.setting.propagate_substitution);
 
                     if let SymbolicValue::ConstantBool(flag) = evaled_condition {
                         if flag {
@@ -680,7 +702,7 @@ impl<'a> SymbolicExecutor<'a> {
                     self.trace_if_enabled(&meta);
                     let tmp_val = self.evaluate_expression(value);
                     let return_value =
-                        self.fold_variables(&tmp_val, !self.setting.propagate_substitution);
+                        self.simplify_variables(&tmp_val, !self.setting.propagate_substitution);
                     // Handle return value (e.g., store in a special "return" variable)
 
                     if !self.symbolic_library.id2name.contains_key(&usize::MAX) {
@@ -724,16 +746,36 @@ impl<'a> SymbolicExecutor<'a> {
                 } => {
                     self.trace_if_enabled(&meta);
                     let expr = self.evaluate_expression(rhe);
-                    let original_value = self.fold_variables(&expr, true);
-                    let value = self.fold_variables(&expr, !self.setting.propagate_substitution);
+                    let original_value = self.simplify_variables(&expr, true);
+                    let value =
+                        self.simplify_variables(&expr, !self.setting.propagate_substitution);
 
-                    /*let base_name = SymbolicName {
-                        name: *var,
-                        owner: self.cur_state.owner_name.clone(),
-                        access: None,
-                    };*/
                     let (base_name, var_name) = self.construct_symbolic_name(*var, access);
-                    self.cur_state.set_symval(var_name.clone(), value.clone());
+                    match value {
+                        SymbolicValue::Array(ref elements) => {
+                            let enumerated_elements = enumerate_array(&value);
+                            for (pos, elem) in enumerated_elements {
+                                let mut new_var_name = var_name.clone();
+                                let mut new_access = if new_var_name.access.is_none() {
+                                    Vec::new()
+                                } else {
+                                    new_var_name.access.clone().unwrap()
+                                };
+                                for p in pos {
+                                    new_access.push(SymbolicAccess::ArrayAccess(
+                                        SymbolicValue::ConstantInt(
+                                            BigInt::from_usize(p.clone()).unwrap(),
+                                        ),
+                                    ));
+                                }
+                                new_var_name.access = Some(new_access);
+                                self.cur_state.set_symval(new_var_name, elem.clone());
+                            }
+                        }
+                        _ => {
+                            self.cur_state.set_symval(var_name.clone(), value.clone());
+                        }
+                    }
 
                     match value {
                         SymbolicValue::Call(callee_name, ref args) => {
@@ -743,9 +785,23 @@ impl<'a> SymbolicExecutor<'a> {
                                 .template_library
                                 .contains_key(&callee_name)
                             {
+                                // Prepare temporal executor
+                                let mut subse_setting = self.setting.clone();
+                                subse_setting.only_initialization_blocks = true;
+                                subse_setting.off_trace = true;
+                                let mut se_for_initialization = SymbolicExecutor::new(
+                                    &mut self.symbolic_library,
+                                    &subse_setting,
+                                );
+                                se_for_initialization.cur_state.owner_name =
+                                    self.cur_state.owner_name.clone();
+
                                 // Temporalily set template-parameters
-                                let template =
-                                    &self.symbolic_library.template_library[&callee_name];
+                                let template = se_for_initialization
+                                    .symbolic_library
+                                    .template_library[&callee_name]
+                                    .clone();
+
                                 let mut escaped_vars = vec![];
                                 for i in 0..(template.template_parameter_names.len()) {
                                     let tp_name = SymbolicName {
@@ -756,23 +812,43 @@ impl<'a> SymbolicExecutor<'a> {
                                     if let Some(val) = self.cur_state.get_symval(&tp_name) {
                                         escaped_vars.push((tp_name.clone(), val.clone()));
                                     }
-                                    self.cur_state.set_rc_symval(tp_name, args[i].clone());
+                                    self.cur_state
+                                        .set_rc_symval(tp_name.clone(), args[i].clone());
+                                    se_for_initialization
+                                        .cur_state
+                                        .set_rc_symval(tp_name, args[i].clone());
                                 }
+
+                                // Initialization
+                                for i in 0..(template.template_parameter_names.len()) {
+                                    se_for_initialization.cur_state.set_rc_symval(
+                                        SymbolicName {
+                                            name: template.template_parameter_names[i],
+                                            owner: se_for_initialization
+                                                .cur_state
+                                                .owner_name
+                                                .clone(),
+                                            access: None,
+                                        },
+                                        self.cur_state.values[&SymbolicName {
+                                            name: template.template_parameter_names[i],
+                                            owner: self.cur_state.owner_name.clone(),
+                                            access: None,
+                                        }]
+                                            .clone(),
+                                    );
+                                }
+                                se_for_initialization.execute(&template.body.clone(), 0);
 
                                 // Initialize template-inputs
                                 let mut inputs_of_component: FxHashMap<
                                     SymbolicName,
                                     Option<SymbolicValue>,
                                 > = FxHashMap::default();
-                                for inp_name in &self.symbolic_library.template_library
-                                    [&callee_name]
-                                    .inputs
-                                    .clone()
-                                {
-                                    let dims = self.evaluate_dimension(
-                                        &self.symbolic_library.template_library[&callee_name]
-                                            .input_dimensions[&inp_name]
-                                            .clone(),
+                                //  & &self.symbolic_library.template_library[&callee_name]
+                                for inp_name in &template.inputs.clone() {
+                                    let dims = se_for_initialization.evaluate_dimension(
+                                        &template.input_dimensions[&inp_name].clone(),
                                     );
                                     register_array_elements(
                                         *inp_name,
@@ -797,6 +873,35 @@ impl<'a> SymbolicExecutor<'a> {
                                 self.symbolic_store
                                     .components_store
                                     .insert(var_name.clone(), c);
+                            } else {
+                                if self.setting.keep_track_constraints {
+                                    match op {
+                                        DebugAssignOp(AssignOp::AssignConstraintSignal) => {
+                                            let cont = SymbolicValue::AssignEq(
+                                                Rc::new(SymbolicValue::Variable(var_name.clone())),
+                                                Rc::new(value.clone()),
+                                            );
+                                            self.cur_state.push_trace_constraint(&cont);
+
+                                            let original_cont = SymbolicValue::BinaryOp(
+                                                Rc::new(SymbolicValue::Variable(var_name)),
+                                                DebugExpressionInfixOpcode(
+                                                    ExpressionInfixOpcode::Eq,
+                                                ),
+                                                Rc::new(original_value),
+                                            );
+                                            self.cur_state.push_side_constraint(&original_cont);
+                                        }
+                                        DebugAssignOp(AssignOp::AssignSignal) => {
+                                            let cont = SymbolicValue::Assign(
+                                                Rc::new(SymbolicValue::Variable(var_name.clone())),
+                                                Rc::new(value.clone()),
+                                            );
+                                            self.cur_state.push_trace_constraint(&cont);
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
                         _ => {
@@ -914,7 +1019,7 @@ impl<'a> SymbolicExecutor<'a> {
                                     );
                                 }
 
-                                let upper_bound = if templ.require_bound_check {
+                                let n_bits = if templ.is_lessthan {
                                     if let SymbolicValue::ConstantInt(n) =
                                         &(*self.symbolic_store.components_store[&base_name].args[0])
                                     {
@@ -937,19 +1042,6 @@ impl<'a> SymbolicExecutor<'a> {
                                         access: k.access.clone(),
                                     };
                                     subse.cur_state.set_symval(n, v.clone().unwrap());
-
-                                    if templ.require_bound_check {
-                                        let cond = SymbolicValue::BinaryOp(
-                                            Rc::new(v.clone().unwrap()),
-                                            DebugExpressionInfixOpcode(
-                                                ExpressionInfixOpcode::Lesser,
-                                            ),
-                                            Rc::new(SymbolicValue::ConstantInt(BigInt::from(
-                                                2_u32.pow(upper_bound),
-                                            ))),
-                                        );
-                                        self.cur_state.push_trace_constraint(&cond);
-                                    }
                                 }
 
                                 if !self.setting.off_trace {
@@ -966,20 +1058,79 @@ impl<'a> SymbolicExecutor<'a> {
                                     );
                                 }
 
+                                let is_lessthan = templ.is_lessthan;
                                 subse.execute(&templ.body.clone(), 0);
 
                                 if subse.symbolic_store.final_states.len() > 1 {
                                     warn!("TODO: This tool currently cannot handle multiple branches within the callee.");
                                 }
-                                //self.cur_state
-                                //    .values
-                                //    .extend(subse.symbolic_store.final_states[0].values.clone());
+
                                 self.cur_state.trace_constraints.append(
                                     &mut subse.symbolic_store.final_states[0].trace_constraints,
                                 );
                                 self.cur_state.side_constraints.append(
                                     &mut subse.symbolic_store.final_states[0].side_constraints,
                                 );
+
+                                if is_lessthan {
+                                    let in_0 = Rc::new(SymbolicValue::Variable(SymbolicName {
+                                        name: subse.symbolic_library.name2id["in"],
+                                        owner: subse.cur_state.owner_name.clone(),
+                                        access: Some(vec![SymbolicAccess::ArrayAccess(
+                                            SymbolicValue::ConstantInt(BigInt::zero()),
+                                        )]),
+                                    }));
+                                    let in_1 = Rc::new(SymbolicValue::Variable(SymbolicName {
+                                        name: subse.symbolic_library.name2id["in"],
+                                        owner: subse.cur_state.owner_name.clone(),
+                                        access: Some(vec![SymbolicAccess::ArrayAccess(
+                                            SymbolicValue::ConstantInt(BigInt::one()),
+                                        )]),
+                                    }));
+                                    let lessthan_out =
+                                        Rc::new(SymbolicValue::Variable(SymbolicName {
+                                            name: subse.symbolic_library.name2id["out"],
+                                            owner: subse.cur_state.owner_name.clone(),
+                                            access: None,
+                                        }));
+                                    let cond_1 = SymbolicValue::BinaryOp(
+                                        Rc::new(SymbolicValue::BinaryOp(
+                                            Rc::new(SymbolicValue::ConstantInt(BigInt::one())),
+                                            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+                                            lessthan_out.clone(),
+                                        )),
+                                        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
+                                        Rc::new(SymbolicValue::BinaryOp(
+                                            in_0.clone(),
+                                            DebugExpressionInfixOpcode(
+                                                ExpressionInfixOpcode::Lesser,
+                                            ),
+                                            in_1.clone(),
+                                        )),
+                                    );
+                                    let cond_0 = SymbolicValue::BinaryOp(
+                                        Rc::new(SymbolicValue::BinaryOp(
+                                            Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
+                                            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+                                            lessthan_out.clone(),
+                                        )),
+                                        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
+                                        Rc::new(SymbolicValue::BinaryOp(
+                                            in_0,
+                                            DebugExpressionInfixOpcode(
+                                                ExpressionInfixOpcode::GreaterEq,
+                                            ),
+                                            in_1,
+                                        )),
+                                    );
+                                    let cond = SymbolicValue::BinaryOp(
+                                        Rc::new(cond_1),
+                                        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolOr),
+                                        Rc::new(cond_0),
+                                    );
+                                    self.cur_state.push_trace_constraint(&cond);
+                                }
+
                                 if !self.setting.off_trace {
                                     trace!(
                                         "{}",
@@ -999,10 +1150,12 @@ impl<'a> SymbolicExecutor<'a> {
 
                     let lhe_val = self.evaluate_expression(lhe);
                     let rhe_val = self.evaluate_expression(rhe);
-                    let simple_lhs = self.fold_variables(&lhe_val, true);
-                    let lhs = self.fold_variables(&lhe_val, !self.setting.propagate_substitution);
-                    let simple_rhs = self.fold_variables(&rhe_val, true);
-                    let rhs = self.fold_variables(&rhe_val, !self.setting.propagate_substitution);
+                    let simple_lhs = self.simplify_variables(&lhe_val, true);
+                    let lhs =
+                        self.simplify_variables(&lhe_val, !self.setting.propagate_substitution);
+                    let simple_rhs = self.simplify_variables(&rhe_val, true);
+                    let rhs =
+                        self.simplify_variables(&rhe_val, !self.setting.propagate_substitution);
 
                     if self.setting.keep_track_constraints {
                         match op {
@@ -1032,10 +1185,12 @@ impl<'a> SymbolicExecutor<'a> {
 
                     let lhe_val = self.evaluate_expression(lhe);
                     let rhe_val = self.evaluate_expression(rhe);
-                    let original_lhs = self.fold_variables(&lhe_val, true);
-                    let lhs = self.fold_variables(&lhe_val, !self.setting.propagate_substitution);
-                    let original_rhs = self.fold_variables(&rhe_val, true);
-                    let rhs = self.fold_variables(&rhe_val, !self.setting.propagate_substitution);
+                    let original_lhs = self.simplify_variables(&lhe_val, true);
+                    let lhs =
+                        self.simplify_variables(&lhe_val, !self.setting.propagate_substitution);
+                    let original_rhs = self.simplify_variables(&rhe_val, true);
+                    let rhs =
+                        self.simplify_variables(&rhe_val, !self.setting.propagate_substitution);
 
                     let original_cond = SymbolicValue::BinaryOp(
                         Rc::new(original_lhs),
@@ -1058,7 +1213,7 @@ impl<'a> SymbolicExecutor<'a> {
                     self.trace_if_enabled(&meta);
                     let expr = self.evaluate_expression(&arg);
                     let condition =
-                        self.fold_variables(&expr, !self.setting.propagate_substitution);
+                        self.simplify_variables(&expr, !self.setting.propagate_substitution);
                     if self.setting.keep_track_constraints {
                         self.cur_state.push_trace_constraint(&condition);
                     }
@@ -1136,7 +1291,7 @@ impl<'a> SymbolicExecutor<'a> {
             DebugAccess::ComponentAccess(name) => SymbolicAccess::ComponentAccess(name.clone()),
             DebugAccess::ArrayAccess(expr) => {
                 let tmp_e = self.evaluate_expression(&expr);
-                SymbolicAccess::ArrayAccess(self.fold_variables(&tmp_e, false))
+                SymbolicAccess::ArrayAccess(self.simplify_variables(&tmp_e, false))
             }
         }
     }
@@ -1145,11 +1300,14 @@ impl<'a> SymbolicExecutor<'a> {
         dims.iter()
             .map(|arg0: &DebugExpression| {
                 let evaled_arg0 = self.evaluate_expression(arg0);
-                let folded_arg0 = self.fold_variables(&evaled_arg0, false);
-                if let SymbolicValue::ConstantInt(bint) = &folded_arg0 {
+                let simplified_arg0 = self.simplify_variables(&evaled_arg0, false);
+                if let SymbolicValue::ConstantInt(bint) = &simplified_arg0 {
                     bint.to_usize().unwrap()
                 } else {
-                    panic!("Undetermined dimension: {:?}", folded_arg0)
+                    panic!(
+                        "Undetermined dimension: {}",
+                        simplified_arg0.lookup_fmt(&self.symbolic_library.id2name)
+                    )
                 }
             })
             .collect::<Vec<_>>()
@@ -1164,8 +1322,8 @@ impl<'a> SymbolicExecutor<'a> {
     ///
     /// # Returns
     ///
-    /// A new `SymbolicValue` representing the folded expression.
-    fn fold_variables(
+    /// A new `SymbolicValue` representing the simplified expression.
+    fn simplify_variables(
         &self,
         symval: &SymbolicValue,
         only_constatant_folding: bool,
@@ -1223,8 +1381,8 @@ impl<'a> SymbolicExecutor<'a> {
                 }
             }
             SymbolicValue::BinaryOp(lv, infix_op, rv) => {
-                let lhs = self.fold_variables(lv, only_constatant_folding);
-                let rhs = self.fold_variables(rv, only_constatant_folding);
+                let lhs = self.simplify_variables(lv, only_constatant_folding);
+                let rhs = self.simplify_variables(rv, only_constatant_folding);
                 match (&lhs, &rhs) {
                     (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => {
                         match &infix_op.0 {
@@ -1316,45 +1474,56 @@ impl<'a> SymbolicExecutor<'a> {
                     _ => SymbolicValue::BinaryOp(Rc::new(lhs), infix_op.clone(), Rc::new(rhs)),
                 }
             }
-            SymbolicValue::Conditional(cond, then_val, else_val) => SymbolicValue::Conditional(
-                Rc::new(self.fold_variables(cond, only_constatant_folding)),
-                Rc::new(self.fold_variables(then_val, only_constatant_folding)),
-                Rc::new(self.fold_variables(else_val, only_constatant_folding)),
-            ),
+            SymbolicValue::Conditional(cond, then_val, else_val) => {
+                let simplified_cond = self.simplify_variables(cond, only_constatant_folding);
+                match simplified_cond {
+                    SymbolicValue::ConstantBool(true) => {
+                        self.simplify_variables(then_val, only_constatant_folding)
+                    }
+                    SymbolicValue::ConstantBool(false) => {
+                        self.simplify_variables(else_val, only_constatant_folding)
+                    }
+                    _ => SymbolicValue::Conditional(
+                        Rc::new(self.simplify_variables(cond, only_constatant_folding)),
+                        Rc::new(self.simplify_variables(then_val, only_constatant_folding)),
+                        Rc::new(self.simplify_variables(else_val, only_constatant_folding)),
+                    ),
+                }
+            }
             SymbolicValue::UnaryOp(prefix_op, value) => {
-                let folded_symval = self.fold_variables(value, only_constatant_folding);
-                match &folded_symval {
+                let simplified_symval = self.simplify_variables(value, only_constatant_folding);
+                match &simplified_symval {
                     SymbolicValue::ConstantInt(rv) => match prefix_op.0 {
                         ExpressionPrefixOpcode::Sub => SymbolicValue::ConstantInt(-1 * rv),
-                        _ => SymbolicValue::UnaryOp(prefix_op.clone(), Rc::new(folded_symval)),
+                        _ => SymbolicValue::UnaryOp(prefix_op.clone(), Rc::new(simplified_symval)),
                     },
                     SymbolicValue::ConstantBool(rv) => match prefix_op.0 {
                         ExpressionPrefixOpcode::BoolNot => SymbolicValue::ConstantBool(!rv),
-                        _ => SymbolicValue::UnaryOp(prefix_op.clone(), Rc::new(folded_symval)),
+                        _ => SymbolicValue::UnaryOp(prefix_op.clone(), Rc::new(simplified_symval)),
                     },
-                    _ => SymbolicValue::UnaryOp(prefix_op.clone(), Rc::new(folded_symval)),
+                    _ => SymbolicValue::UnaryOp(prefix_op.clone(), Rc::new(simplified_symval)),
                 }
             }
             SymbolicValue::Array(elements) => SymbolicValue::Array(
                 elements
                     .iter()
-                    .map(|e| Rc::new(self.fold_variables(e, only_constatant_folding)))
+                    .map(|e| Rc::new(self.simplify_variables(e, only_constatant_folding)))
                     .collect(),
             ),
             SymbolicValue::Tuple(elements) => SymbolicValue::Tuple(
                 elements
                     .iter()
-                    .map(|e| Rc::new(self.fold_variables(e, only_constatant_folding)))
+                    .map(|e| Rc::new(self.simplify_variables(e, only_constatant_folding)))
                     .collect(),
             ),
             SymbolicValue::UniformArray(element, count) => SymbolicValue::UniformArray(
-                Rc::new(self.fold_variables(element, only_constatant_folding)),
-                Rc::new(self.fold_variables(count, only_constatant_folding)),
+                Rc::new(self.simplify_variables(element, only_constatant_folding)),
+                Rc::new(self.simplify_variables(count, only_constatant_folding)),
             ),
             SymbolicValue::Call(func_name, args) => SymbolicValue::Call(
                 func_name.clone(),
                 args.iter()
-                    .map(|arg| Rc::new(self.fold_variables(arg, only_constatant_folding)))
+                    .map(|arg| Rc::new(self.simplify_variables(arg, only_constatant_folding)))
                     .collect(),
             ),
             _ => symval.clone(),
@@ -1464,19 +1633,21 @@ impl<'a> SymbolicExecutor<'a> {
                 SymbolicValue::UniformArray(Rc::new(evaluated_value), Rc::new(evaluated_dimension))
             }
             DebugExpression::Call { id, args, .. } => {
-                let tmp_args: Vec<_> = args
+                let evaluated_args: Vec<_> = args
                     .iter()
                     .map(|arg| self.evaluate_expression(arg))
                     .collect();
-                let evaluated_args = tmp_args
+                let simplified_args = evaluated_args
                     .iter()
-                    .map(|arg| Rc::new(self.fold_variables(&arg, false)))
+                    .map(|arg| Rc::new(self.simplify_variables(&arg, false)))
                     .collect();
                 if self.symbolic_library.template_library.contains_key(id) {
-                    SymbolicValue::Call(id.clone(), evaluated_args)
+                    SymbolicValue::Call(id.clone(), simplified_args)
                 } else if self.symbolic_library.function_library.contains_key(id) {
                     let symbolic_library = &mut self.symbolic_library;
-                    let mut subse = SymbolicExecutor::new(symbolic_library, self.setting);
+                    let mut subse_setting = self.setting.clone();
+                    subse_setting.only_initialization_blocks = false;
+                    let mut subse = SymbolicExecutor::new(symbolic_library, &subse_setting);
 
                     let mut updated_owner_list = (*self.cur_state.owner_name.clone()).clone();
                     updated_owner_list.push(OwnerName {
@@ -1499,7 +1670,7 @@ impl<'a> SymbolicExecutor<'a> {
                         };
                         subse
                             .cur_state
-                            .set_rc_symval(sname, evaluated_args[i].clone());
+                            .set_rc_symval(sname, simplified_args[i].clone());
                     }
 
                     if !subse.setting.off_trace {
@@ -1513,27 +1684,37 @@ impl<'a> SymbolicExecutor<'a> {
                         warn!("TODO: This tool currently cannot handle multiple branches within the callee.");
                     }
 
-                    self.cur_state
-                        .trace_constraints
-                        .append(&mut subse.symbolic_store.final_states[0].trace_constraints);
-                    self.cur_state
-                        .side_constraints
-                        .append(&mut subse.symbolic_store.final_states[0].side_constraints);
+                    if !subse.symbolic_store.final_states.is_empty() {
+                        self.cur_state
+                            .trace_constraints
+                            .append(&mut subse.symbolic_store.final_states[0].trace_constraints);
+                        //self.cur_state
+                        //    .side_constraints
+                        //    .append(&mut subse.symbolic_store.final_states[0].side_constraints);
 
-                    if !subse.setting.off_trace {
-                        trace!("{}", format!("{}", "===========================").cyan());
+                        if !subse.setting.off_trace {
+                            trace!("{}", format!("{}", "===========================").cyan());
+                        }
+
+                        let return_name = SymbolicName {
+                            name: usize::MAX,
+                            owner: subse.symbolic_store.final_states[0].owner_name.clone(),
+                            access: None,
+                        };
+                        let return_value =
+                            (*subse.symbolic_store.final_states[0].values[&return_name].clone())
+                                .clone();
+                        match return_value {
+                            SymbolicValue::ConstantBool(_) | SymbolicValue::ConstantInt(_) => {
+                                return_value
+                            }
+                            _ => SymbolicValue::Call(id.clone(), simplified_args),
+                        }
+                    } else {
+                        panic!("Empty Final State");
                     }
-
-                    let sname = SymbolicName {
-                        name: usize::MAX,
-                        owner: subse.symbolic_store.final_states[0].owner_name.clone(),
-                        access: None,
-                    };
-
-                    (*subse.symbolic_store.final_states[0].values[&sname].clone()).clone()
                 } else {
-                    error!("Unknown Callee: {}", id);
-                    SymbolicValue::Call(id.clone(), evaluated_args)
+                    panic!("Unknown Callee: {}", self.symbolic_library.id2name[id]);
                 }
             }
             /*
