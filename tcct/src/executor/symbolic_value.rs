@@ -7,13 +7,17 @@ use log::warn;
 use num_bigint_dig::BigInt;
 use num_traits::FromPrimitive;
 use num_traits::ToPrimitive;
+use num_traits::{One, Signed, Zero};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use program_structure::ast::{ExpressionInfixOpcode, SignalType, Statement, VariableType};
+use program_structure::ast::{
+    ExpressionInfixOpcode, ExpressionPrefixOpcode, SignalType, Statement, VariableType,
+};
 
 use crate::executor::debug_ast::{
     DebugExpression, DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode, DebugStatement,
 };
+use crate::executor::utils::{extended_euclidean, modpow};
 
 /// Represents the access type within a symbolic expression, such as component or array access.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -541,6 +545,18 @@ pub fn register_array_elements<T>(
     }
 }
 
+/// Recursively enumerates elements of a nested `SymbolicValue::Array`, returning a vector of tuples
+/// containing the index path and a reference to each non-array element.
+///
+/// # Arguments
+///
+/// * `value` - A reference to the `SymbolicValue` to enumerate.
+///
+/// # Returns
+///
+/// A `Vec<(Vec<usize>, &SymbolicValue)>` where each tuple contains:
+/// - A `Vec<usize>` representing the index path to the element.
+/// - A reference to the non-array `SymbolicValue`.
 pub fn enumerate_array(value: &SymbolicValue) -> Vec<(Vec<usize>, &SymbolicValue)> {
     let mut result = Vec::new();
     let mut queue = VecDeque::new();
@@ -569,5 +585,137 @@ pub fn is_true(val: &SymbolicValue) -> bool {
         true
     } else {
         false
+    }
+}
+
+pub fn evaluate_binary_op(
+    lhs: &SymbolicValue,
+    rhs: &SymbolicValue,
+    prime: &BigInt,
+    op: &DebugExpressionInfixOpcode,
+) -> SymbolicValue {
+    match (&lhs, &rhs) {
+        (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => match &op.0 {
+            ExpressionInfixOpcode::Add => SymbolicValue::ConstantInt((lv + rv) % prime),
+            ExpressionInfixOpcode::Sub => SymbolicValue::ConstantInt((lv - rv) % prime),
+            ExpressionInfixOpcode::Mul => SymbolicValue::ConstantInt((lv * rv) % prime),
+            ExpressionInfixOpcode::Pow => SymbolicValue::ConstantInt(modpow(lv, rv, prime)),
+            ExpressionInfixOpcode::Div => {
+                if rv.is_zero() {
+                    SymbolicValue::ConstantInt(BigInt::zero())
+                } else {
+                    let mut r = prime.clone();
+                    let mut new_r = rv.clone();
+                    if r.is_negative() {
+                        r += prime;
+                    }
+                    if new_r.is_negative() {
+                        new_r += prime;
+                    }
+
+                    let (_, _, mut rv_inv) = extended_euclidean(r, new_r);
+                    rv_inv %= prime;
+                    if rv_inv.is_negative() {
+                        rv_inv += prime;
+                    }
+
+                    SymbolicValue::ConstantInt((lv * rv_inv) % prime)
+                }
+            }
+            ExpressionInfixOpcode::IntDiv => SymbolicValue::ConstantInt(lv / rv),
+            ExpressionInfixOpcode::Mod => SymbolicValue::ConstantInt(lv % rv),
+            ExpressionInfixOpcode::BitOr => SymbolicValue::ConstantInt(lv | rv),
+            ExpressionInfixOpcode::BitAnd => SymbolicValue::ConstantInt(lv & rv),
+            ExpressionInfixOpcode::BitXor => SymbolicValue::ConstantInt(lv ^ rv),
+            ExpressionInfixOpcode::ShiftL => {
+                SymbolicValue::ConstantInt(lv << rv.to_usize().unwrap())
+            }
+            ExpressionInfixOpcode::ShiftR => {
+                SymbolicValue::ConstantInt(lv >> rv.to_usize().unwrap())
+            }
+            ExpressionInfixOpcode::Lesser => SymbolicValue::ConstantBool(lv % prime < rv % prime),
+            ExpressionInfixOpcode::Greater => SymbolicValue::ConstantBool(lv % prime > rv % prime),
+            ExpressionInfixOpcode::LesserEq => {
+                SymbolicValue::ConstantBool(lv % prime <= rv % prime)
+            }
+            ExpressionInfixOpcode::GreaterEq => {
+                SymbolicValue::ConstantBool(lv % prime >= rv % prime)
+            }
+            ExpressionInfixOpcode::Eq => SymbolicValue::ConstantBool(lv % prime == rv % prime),
+            ExpressionInfixOpcode::NotEq => SymbolicValue::ConstantBool(lv % prime != rv % prime),
+            _ => todo!("{:?} is currently not supported", op),
+        },
+        (SymbolicValue::ConstantBool(lv), SymbolicValue::ConstantBool(rv)) => match &op.0 {
+            ExpressionInfixOpcode::BoolAnd => SymbolicValue::ConstantBool(*lv && *rv),
+            ExpressionInfixOpcode::BoolOr => SymbolicValue::ConstantBool(*lv || *rv),
+            _ => todo!("{:?} is currently not supported", op),
+        },
+        _ => SymbolicValue::BinaryOp(Rc::new(lhs.clone()), op.clone(), Rc::new(rhs.clone())),
+    }
+}
+
+pub fn generate_lessthan_constraint(
+    name2id: &FxHashMap<String, usize>,
+    owner_name: Rc<Vec<OwnerName>>,
+) -> SymbolicValue {
+    let in_0 = Rc::new(SymbolicValue::Variable(SymbolicName {
+        name: name2id["in"],
+        owner: owner_name.clone(),
+        access: Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::zero()),
+        )]),
+    }));
+    let in_1 = Rc::new(SymbolicValue::Variable(SymbolicName {
+        name: name2id["in"],
+        owner: owner_name.clone(),
+        access: Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::one()),
+        )]),
+    }));
+    let lessthan_out = Rc::new(SymbolicValue::Variable(SymbolicName {
+        name: name2id["out"],
+        owner: owner_name,
+        access: None,
+    }));
+    let cond_1 = SymbolicValue::BinaryOp(
+        Rc::new(SymbolicValue::BinaryOp(
+            Rc::new(SymbolicValue::ConstantInt(BigInt::one())),
+            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+            lessthan_out.clone(),
+        )),
+        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
+        Rc::new(SymbolicValue::BinaryOp(
+            in_0.clone(),
+            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Lesser),
+            in_1.clone(),
+        )),
+    );
+    let cond_0 = SymbolicValue::BinaryOp(
+        Rc::new(SymbolicValue::BinaryOp(
+            Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
+            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+            lessthan_out.clone(),
+        )),
+        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
+        Rc::new(SymbolicValue::BinaryOp(
+            in_0,
+            DebugExpressionInfixOpcode(ExpressionInfixOpcode::GreaterEq),
+            in_1,
+        )),
+    );
+    SymbolicValue::BinaryOp(
+        Rc::new(cond_1),
+        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolOr),
+        Rc::new(cond_0),
+    )
+}
+
+pub fn negate_condition(condition: &SymbolicValue) -> SymbolicValue {
+    match condition {
+        SymbolicValue::ConstantBool(v) => SymbolicValue::ConstantBool(!v),
+        _ => SymbolicValue::UnaryOp(
+            DebugExpressionPrefixOpcode(ExpressionPrefixOpcode::BoolNot),
+            Rc::new(condition.clone()),
+        ),
     }
 }
