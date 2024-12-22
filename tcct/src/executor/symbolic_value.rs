@@ -97,16 +97,14 @@ impl SymbolicName {
             self.owner
                 .iter()
                 .map(|e: &OwnerName| {
-                    let access_str = if e.access.is_none() {
-                        ""
-                    } else {
-                        &e.access
-                            .clone()
-                            .unwrap()
+                    let access_str: String = if let Some(accesses) = &e.access {
+                        accesses
                             .iter()
                             .map(|s: &SymbolicAccess| s.lookup_fmt(lookup))
                             .collect::<Vec<_>>()
                             .join("")
+                    } else {
+                        "default".to_string()
                     };
                     lookup[&e.name].clone() + &access_str
                 })
