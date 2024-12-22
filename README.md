@@ -8,6 +8,8 @@ To compile the tool, run:
 
 ```bash
 cargo build
+or
+cargo build --release
 ```
 
 ## Usage
@@ -33,7 +35,9 @@ ARGS:
 **Example command:**
 
 ```bash
-./target/release/tcct ../sample/iszero_vuln.circom --search_mode="ga"
+./target/debug/tcct ./tests/sample/iszero_vuln.circom --search_mode="ga"
+or
+./target/release/tcct ./tests/sample/iszero_vuln.circom --search_mode="ga"
 ```
 
 **Example output:**
