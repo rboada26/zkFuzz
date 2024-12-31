@@ -108,6 +108,7 @@ pub fn get_setting(prime: &BigInt) -> SymbolicExecutorSetting {
         off_trace: false,
         keep_track_constraints: true,
         substitute_output: false,
+        propagate_assignments: false,
     }
 }
 
@@ -161,6 +162,7 @@ fn test_if_else() {
                 access: None,
             })),
             Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
+            false,
         ),
         SymbolicValue::AssignEq(
             Rc::new(SymbolicValue::Variable(SymbolicName {
@@ -187,7 +189,15 @@ fn test_if_else() {
                         })),
                     )),
                     DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
-                    Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
+                    Rc::new(SymbolicValue::Variable(SymbolicName {
+                        name: sexe.symbolic_library.name2id["inv"],
+                        owner: Rc::new(vec![OwnerName {
+                            name: sexe.symbolic_library.name2id["main"],
+                            access: None,
+                            counter: 0,
+                        }]),
+                        access: None,
+                    })),
                 )),
                 DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                 Rc::new(SymbolicValue::ConstantInt(BigInt::one())),
@@ -527,6 +537,7 @@ fn test_1d_array_component() {
                     )]),
                 })),
             )),
+            false,
         ),
     ];
 
@@ -800,6 +811,7 @@ fn test_2d_array_var() {
             DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
             Rc::new(SymbolicValue::ConstantInt(BigInt::from(4))),
         )),
+        false,
     )];
 
     for i in 0..ground_truth_trace_constraints.len() {
@@ -826,6 +838,7 @@ fn test_multidimensional_array_function() {
         off_trace: false,
         keep_track_constraints: true,
         substitute_output: false,
+        propagate_assignments: false,
     };
 
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
@@ -1089,6 +1102,7 @@ fn test_2d_array_component() {
                     ]),
                 })),
             )),
+            false,
         ),
     ];
 
@@ -1599,6 +1613,23 @@ fn test_anonymous_component() {
             *sexe.symbolic_store.final_states[0].trace_constraints[i].clone()
         );
     }
+}
+
+#[test]
+fn test_branch_within_callee() {
+    let path = "./tests/sample/test_branch_within_callee.circom".to_string();
+    let prime = BigInt::from_str(
+        "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+    )
+    .unwrap();
+
+    let (mut symbolic_library, program_archive) = prepare_symbolic_library(path, prime.clone());
+    let setting = get_setting(&prime);
+
+    let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
+    execute(&mut sexe, &program_archive);
+
+    assert_eq!(sexe.symbolic_store.final_states.len(), 4);
 }
 
 #[test]

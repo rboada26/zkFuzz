@@ -20,7 +20,7 @@ use crate::executor::symbolic_value::{
 pub enum UnderConstrainedType {
     UnusedOutput,
     Deterministic,
-    NonDeterministic,
+    NonDeterministic(String, BigInt),
 }
 
 /// Represents the result of a constraint verification process.
@@ -44,9 +44,12 @@ impl fmt::Display for VerificationResult {
                 UnderConstrainedType::Deterministic => {
                     "🧟 UnderConstrained (Deterministic) 🧟".red().bold()
                 }
-                UnderConstrainedType::NonDeterministic => {
-                    "🔥 UnderConstrained (Non-Deterministic) 🔥".red().bold()
-                }
+                UnderConstrainedType::NonDeterministic(name, value) => format!(
+                    "🔥 UnderConstrained (Non-Deterministic) 🔥\n║           ➡️ `{}` is expected to be `{}`",
+                    name, value
+                )
+                .red()
+                .bold(),
             },
             VerificationResult::OverConstrained => "💣 OverConstrained 💣".yellow().bold(),
             VerificationResult::WellConstrained => "✅ WellConstrained ✅".green().bold(),
@@ -170,7 +173,9 @@ pub fn extract_variables_from_symbolic_value(
         SymbolicValue::Variable(name) => {
             variables.insert(name.clone());
         }
-        SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+        SymbolicValue::Assign(lhs, rhs, _)
+        | SymbolicValue::AssignEq(lhs, rhs)
+        | SymbolicValue::AssignCall(lhs, rhs) => {
             extract_variables_from_symbolic_value(&lhs, variables);
             extract_variables_from_symbolic_value(&rhs, variables);
         }
@@ -208,7 +213,9 @@ pub fn get_dependency_graph(
 ) {
     for value in values {
         match value.as_ref() {
-            SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+            SymbolicValue::Assign(lhs, rhs, _)
+            | SymbolicValue::AssignEq(lhs, rhs)
+            | SymbolicValue::AssignCall(lhs, rhs) => {
                 if let SymbolicValue::Variable(name) = lhs.as_ref() {
                     graph.entry(name.clone()).or_default();
                     extract_variables_from_symbolic_value(&rhs, graph.get_mut(&name).unwrap());
@@ -316,7 +323,9 @@ pub fn emulate_symbolic_values(
                     success = false;
                 }
             }
-            SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+            SymbolicValue::Assign(lhs, rhs, _)
+            | SymbolicValue::AssignEq(lhs, rhs)
+            | SymbolicValue::AssignCall(lhs, rhs) => {
                 if let SymbolicValue::Variable(name) = lhs.as_ref() {
                     let rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
                     if let SymbolicValue::ConstantInt(num) = &rhs_val {
@@ -394,6 +403,12 @@ pub fn evaluate_symbolic_value(
         SymbolicValue::ConstantBool(_b) => value.clone(),
         SymbolicValue::ConstantInt(_v) => value.clone(),
         SymbolicValue::Variable(name) => {
+            if !assignment.contains_key(name) {
+                panic!(
+                    "name={} is not available in the assignment",
+                    name.lookup_fmt(&symbolic_library.id2name)
+                );
+            }
             SymbolicValue::ConstantInt(assignment.get(name).unwrap().clone())
         }
         SymbolicValue::Array(elements) => SymbolicValue::Array(
@@ -409,7 +424,9 @@ pub fn evaluate_symbolic_value(
                 })
                 .collect(),
         ),
-        SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+        SymbolicValue::Assign(lhs, rhs, _)
+        | SymbolicValue::AssignEq(lhs, rhs)
+        | SymbolicValue::AssignCall(lhs, rhs) => {
             let lhs_val = evaluate_symbolic_value(prime, lhs, assignment, symbolic_library);
             let rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
             match (&lhs_val, &rhs_val) {
@@ -450,6 +467,7 @@ pub fn evaluate_symbolic_value(
                 off_trace: true,
                 keep_track_constraints: false,
                 substitute_output: false,
+                propagate_assignments: true,
             };
             let mut subse = SymbolicExecutor::new(symbolic_library, &setting);
 
@@ -548,7 +566,9 @@ pub fn evaluate_error_of_symbolic_value(
                 BigInt::one()
             }
         }
-        SymbolicValue::Assign(lhs, rhs) | SymbolicValue::AssignEq(lhs, rhs) => {
+        SymbolicValue::Assign(lhs, rhs, _)
+        | SymbolicValue::AssignEq(lhs, rhs)
+        | SymbolicValue::AssignCall(lhs, rhs) => {
             let lhs_val = evaluate_symbolic_value(prime, lhs, assignment, symbolic_library);
             let rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
             match (&lhs_val, &rhs_val) {
@@ -626,7 +646,7 @@ pub fn verify_assignment(
     );
 
     if is_satisfy_tc && !is_satisfy_sc {
-        return VerificationResult::OverConstrained;
+        VerificationResult::OverConstrained
     } else if !is_satisfy_tc && is_satisfy_sc {
         sexe.clear();
         sexe.cur_state.add_owner(&OwnerName {
@@ -640,7 +660,7 @@ pub fn verify_assignment(
         );
         sexe.concrete_execute(&setting.id, assignment);
 
-        let mut flag = false;
+        let mut result = VerificationResult::WellConstrained;
         if sexe.symbolic_store.final_states.len() > 0 {
             for (k, v) in assignment {
                 if sexe.symbolic_library.template_library
@@ -648,16 +668,21 @@ pub fn verify_assignment(
                     .outputs
                     .contains(&k.name)
                 {
-                    let unboxed_value = &sexe.symbolic_store.final_states[0].values[&k];
-                    if let SymbolicValue::ConstantInt(num) = &(*unboxed_value.clone()) {
+                    let original_value = &sexe.symbolic_store.final_states[0].values[&k];
+                    if let SymbolicValue::ConstantInt(num) = &(*original_value.clone()) {
                         if *num != *v {
-                            flag = true;
+                            result = VerificationResult::UnderConstrained(
+                                UnderConstrainedType::NonDeterministic(
+                                    k.lookup_fmt(&sexe.symbolic_library.id2name),
+                                    num.clone(),
+                                ),
+                            );
                             break;
                         }
                     } else {
                         panic!(
                             "Undetermined Output: {}",
-                            unboxed_value
+                            original_value
                                 .clone()
                                 .lookup_fmt(&sexe.symbolic_library.id2name)
                         );
@@ -666,12 +691,8 @@ pub fn verify_assignment(
             }
         }
 
-        if flag {
-            return VerificationResult::UnderConstrained(UnderConstrainedType::NonDeterministic);
-        } else {
-            return VerificationResult::WellConstrained;
-        }
+        result
     } else {
-        return VerificationResult::WellConstrained;
+        VerificationResult::WellConstrained
     }
 }

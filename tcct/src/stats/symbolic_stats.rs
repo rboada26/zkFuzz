@@ -44,7 +44,7 @@ impl ConstraintStatistics {
             SymbolicValue::Variable(name) => {
                 *self.variable_counts.entry(name.clone()).or_insert(0) += 1;
             }
-            SymbolicValue::Assign(lhs, rhs) => {
+            SymbolicValue::Assign(lhs, rhs, _) => {
                 *self
                     .operator_counts
                     .entry("Assign".to_string())
@@ -56,6 +56,14 @@ impl ConstraintStatistics {
                 *self
                     .operator_counts
                     .entry("AssignEq".to_string())
+                    .or_insert(0) += 1;
+                self.update_from_symbolic_value(lhs, depth + 1);
+                self.update_from_symbolic_value(rhs, depth + 1);
+            }
+            SymbolicValue::AssignCall(lhs, rhs) => {
+                *self
+                    .operator_counts
+                    .entry("AssignCall".to_string())
                     .or_insert(0) += 1;
                 self.update_from_symbolic_value(lhs, depth + 1);
                 self.update_from_symbolic_value(rhs, depth + 1);

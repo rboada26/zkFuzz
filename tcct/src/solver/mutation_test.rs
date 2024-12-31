@@ -17,8 +17,8 @@ use crate::executor::symbolic_execution::SymbolicExecutor;
 use crate::executor::symbolic_value::{SymbolicName, SymbolicValue, SymbolicValueRef};
 
 use crate::solver::utils::{
-    accumulate_error_of_constraints, count_satisfied_constraints, emulate_symbolic_values,
-    evaluate_constraints, evaluate_error_of_symbolic_value, extract_variables, is_vulnerable,
+    accumulate_error_of_constraints, emulate_symbolic_values,
+    evaluate_constraints, extract_variables, is_vulnerable,
     verify_assignment, CounterExample, UnderConstrainedType, VerificationResult,
     VerificationSetting,
 };
@@ -41,7 +41,7 @@ pub fn mutation_test_search(
     let mut assign_pos = Vec::new();
     for (i, sv) in trace_constraints.iter().enumerate() {
         match *sv.clone() {
-            SymbolicValue::Assign(_, _) => {
+            SymbolicValue::Assign(_, _, false) => {
                 assign_pos.push(i);
             }
             _ => {}
@@ -63,10 +63,12 @@ pub fn mutation_test_search(
             input_variables.push(v.clone());
         }
     }
+    println!("#Input Variables   : {}", input_variables.len());
+    println!("#Mutation Candidate: {}", assign_pos.len());
 
-    if assign_pos.is_empty() {
-        return None;
-    }
+    //if assign_pos.is_empty() {
+    //    return None;
+    //}
 
     let mut trace_population =
         initialize_trace_mutation(&assign_pos, program_population_size, setting, &mut rng);
@@ -80,21 +82,23 @@ pub fn mutation_test_search(
         );
 
         let mut new_trace_population = vec![FxHashMap::default()];
-        for _ in 0..program_population_size {
-            let parent1 = trace_selection(&trace_population, &mut rng);
-            let parent2 = trace_selection(&trace_population, &mut rng);
+        if !trace_population.is_empty() {
+            for _ in 0..program_population_size {
+                let parent1 = trace_selection(&trace_population, &mut rng);
+                let parent2 = trace_selection(&trace_population, &mut rng);
 
-            let mut child = if rng.gen::<f64>() < crossover_rate {
-                trace_crossover(parent1, parent2, &mut rng)
-            } else {
-                parent1.clone()
-            };
+                let mut child = if rng.gen::<f64>() < crossover_rate {
+                    trace_crossover(parent1, parent2, &mut rng)
+                } else {
+                    parent1.clone()
+                };
 
-            if rng.gen::<f64>() < mutation_rate {
-                trace_mutate(&mut child, setting, &mut rng);
+                if rng.gen::<f64>() < mutation_rate {
+                    trace_mutate(&mut child, setting, &mut rng);
+                }
+
+                new_trace_population.push(child);
             }
-
-            new_trace_population.push(child);
         }
         trace_population = new_trace_population;
 
@@ -136,17 +140,21 @@ pub fn mutation_test_search(
         if best_score.1 >= BigInt::zero() {
             let mut mutated_trace_constraints = trace_constraints.clone();
             for (k, v) in best_mutated_trace {
-                if let SymbolicValue::Assign(lv, _rv) =
+                if let SymbolicValue::Assign(lv, _rv, is_safe) =
                     mutated_trace_constraints[*k].as_ref().clone()
                 {
-                    mutated_trace_constraints[*k] =
-                        Rc::new(SymbolicValue::Assign(lv.clone(), Rc::new(v.clone())));
+                    mutated_trace_constraints[*k] = Rc::new(SymbolicValue::Assign(
+                        lv.clone(),
+                        Rc::new(v.clone()),
+                        is_safe,
+                    ));
                 } else {
                     panic!("We can only mutate SymbolicValue::Assign");
                 }
             }
 
             let mut assignment = input_population[best_score.0].clone();
+
             if emulate_symbolic_values(
                 &setting.prime,
                 &mutated_trace_constraints,
@@ -188,13 +196,11 @@ pub fn mutation_test_search(
             }
         }
 
-        if generation % 10 == 0 {
-            print!(
-                "\rGeneration: {}/{} ({:.3})",
-                generation, max_generations, best_score.1
-            );
-            io::stdout().flush().unwrap();
-        }
+        print!(
+            "\rGeneration: {}/{} ({:.3})",
+            generation, max_generations, best_score.1
+        );
+        io::stdout().flush().unwrap();
     }
 
     println!(
@@ -207,8 +213,8 @@ pub fn mutation_test_search(
 fn draw_random_constant(setting: &VerificationSetting, rng: &mut ThreadRng) -> BigInt {
     if rng.gen::<bool>() {
         rng.gen_bigint_range(
-            &(BigInt::from_str("2").unwrap() * -BigInt::one()),
-            &(BigInt::from_str("2").unwrap()),
+            &(BigInt::from_str("10").unwrap() * -BigInt::one()),
+            &(BigInt::from_str("10").unwrap()),
         )
     } else {
         rng.gen_bigint_range(
@@ -306,9 +312,14 @@ fn trace_fitness(
 ) -> (usize, BigInt) {
     let mut mutated_trace_constraints = trace_constraints.clone();
     for (k, v) in trace_mutation {
-        if let SymbolicValue::Assign(lv, rv) = mutated_trace_constraints[*k].as_ref().clone() {
-            mutated_trace_constraints[*k] =
-                Rc::new(SymbolicValue::Assign(lv.clone(), Rc::new(v.clone())));
+        if let SymbolicValue::Assign(lv, rv, is_safe) =
+            mutated_trace_constraints[*k].as_ref().clone()
+        {
+            mutated_trace_constraints[*k] = Rc::new(SymbolicValue::Assign(
+                lv.clone(),
+                Rc::new(v.clone()),
+                is_safe,
+            ));
         } else {
             panic!("We can only mutate SymbolicValue::Assign");
         }

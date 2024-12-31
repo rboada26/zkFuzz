@@ -104,7 +104,7 @@ impl SymbolicName {
                             .collect::<Vec<_>>()
                             .join("")
                     } else {
-                        "default".to_string()
+                        "".to_string()
                     };
                     lookup[&e.name].clone() + &access_str
                 })
@@ -133,8 +133,9 @@ pub enum SymbolicValue {
     ConstantInt(BigInt),
     ConstantBool(bool),
     Variable(SymbolicName),
-    Assign(SymbolicValueRef, SymbolicValueRef),
+    Assign(SymbolicValueRef, SymbolicValueRef, bool),
     AssignEq(SymbolicValueRef, SymbolicValueRef),
+    AssignCall(SymbolicValueRef, SymbolicValueRef),
     BinaryOp(
         SymbolicValueRef,
         DebugExpressionInfixOpcode,
@@ -165,10 +166,14 @@ impl SymbolicValue {
                 format!("{} {}", if *flag { "✅" } else { "❌" }, flag)
             }
             SymbolicValue::Variable(sname) => sname.lookup_fmt(lookup),
-            SymbolicValue::Assign(lhs, rhs) => {
+            SymbolicValue::Assign(lhs, rhs, is_safe) => {
                 format!(
                     "({} {} {})",
-                    "Assign".green(),
+                    if *is_safe {
+                        "Assign💖".green()
+                    } else {
+                        "Assign".green()
+                    },
                     lhs.lookup_fmt(lookup),
                     rhs.lookup_fmt(lookup)
                 )
@@ -177,6 +182,14 @@ impl SymbolicValue {
                 format!(
                     "({} {} {})",
                     "AssignEq".green(),
+                    lhs.lookup_fmt(lookup),
+                    rhs.lookup_fmt(lookup)
+                )
+            }
+            SymbolicValue::AssignCall(lhs, rhs) => {
+                format!(
+                    "({} {} {})",
+                    "AssignCall".green(),
                     lhs.lookup_fmt(lookup),
                     rhs.lookup_fmt(lookup)
                 )
@@ -275,6 +288,7 @@ pub struct SymbolicTemplate {
     pub id2dimensions: FxHashMap<usize, Vec<DebugExpression>>,
     pub body: Vec<DebugStatement>,
     pub is_lessthan: bool,
+    pub is_safe: bool,
 }
 
 /// Represents a symbolic function used in the symbolic execution process.
@@ -373,6 +387,7 @@ impl SymbolicLibrary {
         let mut id2dimensions = FxHashMap::default();
 
         let is_lessthan = &name == "LessThan";
+        let is_safe = &name == "Num2Bits";
 
         let i = if let Some(i) = self.name2id.get(&name) {
             *i
@@ -414,6 +429,7 @@ impl SymbolicLibrary {
                 id2dimensions: id2dimensions,
                 body: vec![dbody.clone(), DebugStatement::Ret],
                 is_lessthan: is_lessthan,
+                is_safe: is_safe,
             }),
         );
     }
@@ -676,6 +692,8 @@ pub fn evaluate_binary_op(
         (SymbolicValue::ConstantBool(lv), SymbolicValue::ConstantBool(rv)) => match &op.0 {
             ExpressionInfixOpcode::BoolAnd => SymbolicValue::ConstantBool(*lv && *rv),
             ExpressionInfixOpcode::BoolOr => SymbolicValue::ConstantBool(*lv || *rv),
+            ExpressionInfixOpcode::BitAnd => SymbolicValue::ConstantBool(*lv && *rv),
+            ExpressionInfixOpcode::BitOr => SymbolicValue::ConstantBool(*lv | *rv),
             _ => todo!("{:?} is currently not supported", op),
         },
         _ => SymbolicValue::BinaryOp(Rc::new(lhs.clone()), op.clone(), Rc::new(rhs.clone())),
