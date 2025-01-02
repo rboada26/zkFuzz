@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use colored::Colorize;
 use num_bigint_dig::BigInt;
+use num_traits::ToPrimitive;
 use num_traits::{One, Signed, Zero};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -328,10 +329,19 @@ pub fn emulate_symbolic_values(
             | SymbolicValue::AssignCall(lhs, rhs) => {
                 if let SymbolicValue::Variable(name) = lhs.as_ref() {
                     let rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
-                    if let SymbolicValue::ConstantInt(num) = &rhs_val {
-                        assignment.insert(name.clone(), num.clone());
-                    } else {
-                        success = false;
+                    match &rhs_val {
+                        SymbolicValue::ConstantInt(num) => {
+                            assignment.insert(name.clone(), num.clone());
+                        }
+                        SymbolicValue::ConstantBool(b) => {
+                            assignment.insert(
+                                name.clone(),
+                                if *b { BigInt::one() } else { BigInt::zero() },
+                            );
+                        }
+                        _ => {
+                            success = false;
+                        }
                     }
                 } else {
                     panic!("Left hand of the assignment is not a variable");
@@ -424,6 +434,16 @@ pub fn evaluate_symbolic_value(
                 })
                 .collect(),
         ),
+        SymbolicValue::UniformArray(elem, counts) => {
+            let evaled_elem = evaluate_symbolic_value(prime, elem, assignment, symbolic_library);
+            let evaled_counts =
+                evaluate_symbolic_value(prime, counts, assignment, symbolic_library);
+            if let SymbolicValue::ConstantInt(c) = evaled_counts {
+                SymbolicValue::Array(vec![Rc::new(evaled_elem); c.to_usize().unwrap()])
+            } else {
+                SymbolicValue::UniformArray(Rc::new(evaled_elem), Rc::new(evaled_counts))
+            }
+        }
         SymbolicValue::Assign(lhs, rhs, _)
         | SymbolicValue::AssignEq(lhs, rhs)
         | SymbolicValue::AssignCall(lhs, rhs) => {
@@ -668,24 +688,33 @@ pub fn verify_assignment(
                     .outputs
                     .contains(&k.name)
                 {
-                    let original_value = &sexe.symbolic_store.final_states[0].values[&k];
-                    if let SymbolicValue::ConstantInt(num) = &(*original_value.clone()) {
-                        if *num != *v {
-                            result = VerificationResult::UnderConstrained(
-                                UnderConstrainedType::NonDeterministic(
-                                    k.lookup_fmt(&sexe.symbolic_library.id2name),
-                                    num.clone(),
-                                ),
-                            );
-                            break;
+                    let original_sym_value = &sexe.symbolic_store.final_states[0].values[&k];
+                    let original_int_value = match &(*original_sym_value.clone()) {
+                        SymbolicValue::ConstantInt(num) => num.clone(),
+                        SymbolicValue::ConstantBool(b) => {
+                            if *b {
+                                BigInt::one()
+                            } else {
+                                BigInt::zero()
+                            }
                         }
-                    } else {
-                        panic!(
-                            "Undetermined Output: {}",
-                            original_value
-                                .clone()
-                                .lookup_fmt(&sexe.symbolic_library.id2name)
+                        _ => {
+                            panic!(
+                                "Undetermined Output: {}",
+                                original_sym_value
+                                    .clone()
+                                    .lookup_fmt(&sexe.symbolic_library.id2name)
+                            );
+                        }
+                    };
+                    if original_int_value != *v {
+                        result = VerificationResult::UnderConstrained(
+                            UnderConstrainedType::NonDeterministic(
+                                k.lookup_fmt(&sexe.symbolic_library.id2name),
+                                original_int_value.clone(),
+                            ),
                         );
+                        break;
                     }
                 }
             }
