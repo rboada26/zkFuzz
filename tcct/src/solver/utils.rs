@@ -18,6 +18,7 @@ use crate::executor::symbolic_value::{
     evaluate_binary_op, OwnerName, SymbolicLibrary, SymbolicName, SymbolicValue, SymbolicValueRef,
 };
 
+#[derive(Clone)]
 pub enum UnderConstrainedType {
     UnusedOutput,
     Deterministic,
@@ -25,6 +26,7 @@ pub enum UnderConstrainedType {
 }
 
 /// Represents the result of a constraint verification process.
+#[derive(Clone)]
 pub enum VerificationResult {
     UnderConstrained(UnderConstrainedType),
     OverConstrained,
@@ -60,6 +62,7 @@ impl fmt::Display for VerificationResult {
 }
 
 /// Represents a counterexample when constraints are found to be invalid.
+#[derive(Clone)]
 pub struct CounterExample {
     pub flag: VerificationResult,
     pub assignment: FxHashMap<SymbolicName, BigInt>,
@@ -608,7 +611,13 @@ pub fn evaluate_error_of_symbolic_value(
                     ExpressionInfixOpcode::LesserEq => lv % prime - rv % prime,
                     ExpressionInfixOpcode::GreaterEq => rv % prime - lv % prime,
                     ExpressionInfixOpcode::Eq => (lv % prime - rv % prime).abs(),
-                    ExpressionInfixOpcode::NotEq => -(lv % prime - rv % prime).abs(),
+                    ExpressionInfixOpcode::NotEq => {
+                        if lv % prime == rv % prime {
+                            BigInt::one()
+                        } else {
+                            BigInt::zero()
+                        }
+                    }
                     _ => panic!("Only support comparison operators"),
                 },
                 _ => panic!(
@@ -621,7 +630,13 @@ pub fn evaluate_error_of_symbolic_value(
         SymbolicValue::UnaryOp(op, expr) => {
             let error = evaluate_error_of_symbolic_value(prime, expr, assignment, symbolic_library);
             match op.0 {
-                ExpressionPrefixOpcode::BoolNot => -error,
+                ExpressionPrefixOpcode::BoolNot => {
+                    if error.is_zero() {
+                        BigInt::one()
+                    } else {
+                        -error
+                    }
+                }
                 _ => panic!("Only support BoolNot"),
             }
         }
