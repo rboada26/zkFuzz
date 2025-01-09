@@ -318,7 +318,7 @@ impl SymbolicValue {
             }
             SymbolicValue::Array(elems) => {
                 format!(
-                    "[🧬 {}]",
+                    "[🔗 {}]",
                     elems
                         .into_iter()
                         .map(|a| a.lookup_fmt(lookup))
@@ -328,7 +328,7 @@ impl SymbolicValue {
             }
             SymbolicValue::UniformArray(elem, counts) => {
                 format!(
-                    "(🧬 {}, {})",
+                    "(🔗 {}, {})",
                     elem.lookup_fmt(lookup),
                     counts.lookup_fmt(lookup)
                 )
@@ -749,7 +749,11 @@ pub fn evaluate_binary_op(
                     SymbolicValue::ConstantInt((lv * rv_inv) % prime)
                 }
             }
-            ExpressionInfixOpcode::IntDiv => SymbolicValue::ConstantInt(lv / rv),
+            ExpressionInfixOpcode::IntDiv => SymbolicValue::ConstantInt(if rv.is_zero() {
+                BigInt::zero()
+            } else {
+                lv / rv
+            }),
             ExpressionInfixOpcode::Mod => SymbolicValue::ConstantInt(lv % rv),
             ExpressionInfixOpcode::BitOr => SymbolicValue::ConstantInt(lv | rv),
             ExpressionInfixOpcode::BitAnd => SymbolicValue::ConstantInt(lv & rv),

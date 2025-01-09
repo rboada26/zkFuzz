@@ -1,4 +1,5 @@
 use std::cmp::max;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use colored::Colorize;
@@ -6,7 +7,7 @@ use log::trace;
 use num_bigint_dig::BigInt;
 use num_traits::cast::ToPrimitive;
 use num_traits::FromPrimitive;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 
 use program_structure::ast::{
     AssignOp, Expression, ExpressionInfixOpcode, ExpressionPrefixOpcode, Meta, SignalType,
@@ -17,252 +18,15 @@ use crate::executor::debug_ast::{
     DebugAccess, DebugAssignOp, DebugExpression, DebugExpressionInfixOpcode, DebugStatement,
     DebugVariableType,
 };
+use crate::executor::symbolic_setting::SymbolicExecutorSetting;
+use crate::executor::symbolic_state::SymbolicState;
 use crate::executor::symbolic_value::{
     access_multidimensional_array, create_nested_array, decompose_uniform_array, enumerate_array,
     evaluate_binary_op, generate_lessthan_constraint, is_concrete_array, register_array_elements,
     update_nested_array, OwnerName, SymbolicAccess, SymbolicComponent, SymbolicLibrary,
     SymbolicName, SymbolicTemplate, SymbolicValue, SymbolicValueRef,
 };
-use crate::executor::utils::{generate_cartesian_product_indices, italic};
-
-pub type SymbolBindingMap = FxHashMap<SymbolicName, SymbolicValueRef>;
-pub type SymbolicConstraints = Vec<SymbolicValueRef>;
-
-/// Represents the state of symbolic execution, holding symbolic values,
-/// trace constraints, side constraints, and depth information.
-#[derive(Clone)]
-pub struct SymbolicState {
-    pub owner_name: Rc<Vec<OwnerName>>,
-    pub template_id: usize,
-    pub is_within_initialization_block: bool,
-    pub contains_symbolic_loop: bool,
-    pub depth: usize,
-    pub symbol_binding_map: SymbolBindingMap,
-    pub trace_constraints: SymbolicConstraints,
-    pub side_constraints: SymbolicConstraints,
-    pub is_failed: bool,
-}
-
-impl SymbolicState {
-    /// Creates a new `SymbolicState` with default values.
-    ///
-    /// # Returns
-    ///
-    /// A new instance of `SymbolicState` with empty fields.
-    pub fn new() -> Self {
-        SymbolicState {
-            owner_name: Rc::new(Vec::new()),
-            template_id: usize::MAX,
-            is_within_initialization_block: false,
-            contains_symbolic_loop: false,
-            depth: 0_usize,
-            symbol_binding_map: FxHashMap::default(),
-            trace_constraints: Vec::new(),
-            side_constraints: Vec::new(),
-            is_failed: false,
-        }
-    }
-
-    /// Adds an owner to the current symbolic state.
-    ///
-    /// This method appends a new owner name to the existing list of owners.
-    ///
-    /// # Arguments
-    ///
-    /// * `owner_name` - The `OwnerName` to be added.
-    pub fn add_owner(&mut self, owner_name: &OwnerName) {
-        let updated_owner_list = Rc::make_mut(&mut self.owner_name);
-        updated_owner_list.push(owner_name.clone());
-    }
-
-    /// Retrieves the full owner name as a string.
-    ///
-    /// This method joins all owner names in the current state using a dot separator.
-    ///
-    /// # Arguments
-    ///
-    /// * `id2name` - A hash map containing mappings from usize to String for name lookups.
-    ///
-    /// # Returns
-    ///
-    /// A string representing the full owner name.
-    pub fn get_owner(&self, id2name: &FxHashMap<usize, String>) -> String {
-        self.owner_name
-            .iter()
-            .map(|e: &OwnerName| {
-                let access_str: String = if let Some(accesses) = &e.access {
-                    accesses
-                        .iter()
-                        .map(|s: &SymbolicAccess| s.lookup_fmt(id2name))
-                        .collect::<Vec<_>>()
-                        .join("")
-                } else {
-                    "".to_string()
-                };
-                id2name[&e.id].clone() + &access_str
-            })
-            .collect::<Vec<_>>()
-            .join(".")
-    }
-
-    /// Sets the template ID for the current symbolic state.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The usize value representing the template ID.
-    pub fn set_template_id(&mut self, id: usize) {
-        self.template_id = id;
-    }
-
-    /// Sets the current depth of the symbolic state.
-    ///
-    /// # Arguments
-    ///
-    /// * `d` - The depth level to set.
-    pub fn set_depth(&mut self, depth_level: usize) {
-        self.depth = depth_level;
-    }
-
-    /// Retrieves the current depth of the symbolic state.
-    ///
-    /// # Returns
-    ///
-    /// The depth as an unsigned integer.
-    pub fn get_depth(&self) -> usize {
-        self.depth
-    }
-
-    /// Sets a symbolic value for a given variable name in the state.
-    ///
-    /// # Arguments
-    ///
-    /// * `sym_name` - The name of the variable.
-    /// * `sym_val` - The symbolic value to associate with the variable.
-    pub fn set_sym_val(&mut self, sym_name: SymbolicName, sym_val: SymbolicValue) {
-        self.symbol_binding_map.insert(sym_name, Rc::new(sym_val));
-    }
-
-    /// Sets a reference-counted symbolic value for a given variable name in the state.
-    ///
-    /// # Arguments
-    ///
-    /// * `sym_name` - The name of the variable.
-    /// * `sym_val` - The reference-counted symbolic value to associate with the variable.
-    pub fn set_rc_sym_val(&mut self, sym_name: SymbolicName, sym_val: SymbolicValueRef) {
-        self.symbol_binding_map.insert(sym_name, sym_val);
-    }
-
-    /// Retrieves a symbolic value associated with a given variable name.
-    ///
-    /// # Arguments
-    ///
-    /// * `sym_name` - The name of the variable to retrieve.
-    ///
-    /// # Returns
-    ///
-    /// An optional reference to the symbolic value if it exists.
-    pub fn get_sym_val(&self, sym_name: &SymbolicName) -> Option<&SymbolicValueRef> {
-        self.symbol_binding_map.get(sym_name)
-    }
-
-    pub fn get_sym_val_or_make_symvar(&self, sym_name: &SymbolicName) -> SymbolicValue {
-        if let Some(sym_val) = self.symbol_binding_map.get(sym_name) {
-            (**sym_val).clone()
-        } else {
-            SymbolicValue::Variable(sym_name.clone())
-        }
-    }
-
-    /// Adds a trace constraint to the current state.
-    ///
-    /// # Arguments
-    ///
-    /// * `constraint` - The symbolic value representing the constraint.
-    pub fn push_trace_constraint(&mut self, constraint: &SymbolicValue) {
-        self.trace_constraints.push(Rc::new(constraint.clone()));
-    }
-
-    /// Adds a side constraint to the current state.
-    ///
-    /// # Arguments
-    ///
-    /// * `constraint` - The symbolic value representing the constraint.
-    pub fn push_side_constraint(&mut self, constraint: &SymbolicValue) {
-        self.side_constraints.push(Rc::new(constraint.clone()));
-    }
-
-    /// Formats the symbolic state for lookup and display.
-    ///
-    /// This method creates a string representation of the symbolic state,
-    /// including owner, depth, values, trace constraints, and side constraints.
-    ///
-    /// # Arguments
-    ///
-    /// * `id2name` - A hash map containing mappings from usize to String for name lookups.
-    ///
-    /// # Returns
-    ///
-    /// A formatted string representation of the symbolic state.
-    pub fn lookup_fmt(&self, id2name: &FxHashMap<usize, String>) -> String {
-        let mut s = "".to_string();
-        s += &format!("🛠️ {}", format!("{}", "SymbolicState [\n").cyan());
-        s += &format!(
-            "  {} {}\n",
-            format!("👤 {}", "owner:").cyan(),
-            italic(&format!("{:?}", &self.get_owner(id2name))).magenta()
-        );
-        s += &format!("  📏 {} {}\n", format!("{}", "depth:").cyan(), self.depth);
-        s += &format!("  📋 {}\n", format!("{}", "values:").cyan());
-        for (k, v) in self.symbol_binding_map.iter() {
-            s += &format!(
-                "      {}: {}\n",
-                k.lookup_fmt(id2name),
-                format!("{}", v.lookup_fmt(id2name))
-                    .replace("\n", "")
-                    .replace("  ", " ")
-            );
-        }
-        s += &format!(
-            "  {} {}\n",
-            format!("{}", "🪶 trace_constraints:").cyan(),
-            format!(
-                "{}",
-                &self
-                    .trace_constraints
-                    .iter()
-                    .map(|c| c.lookup_fmt(id2name))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .replace("\n", "")
-            .replace("  ", " ")
-            .replace("  ", " ")
-        );
-        s += &format!(
-            "  {} {}\n",
-            format!("{}", "⛓️ side_constraints:").cyan(),
-            format!(
-                "{}",
-                &self
-                    .side_constraints
-                    .iter()
-                    .map(|c| c.lookup_fmt(id2name))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .replace("\n", "")
-            .replace("  ", " ")
-            .replace("  ", " ")
-        );
-        s += &format!(
-            "  {} {}\n",
-            format!("{}", "➰ contains_symbolic_loop:").cyan(),
-            self.contains_symbolic_loop
-        );
-        s += &format!("{}\n", format!("{}", "]").cyan());
-        s
-    }
-}
+use crate::executor::utils::generate_cartesian_product_indices;
 
 pub struct SymbolicStore {
     pub components_store: FxHashMap<SymbolicName, SymbolicComponent>,
@@ -278,14 +42,51 @@ impl SymbolicStore {
 }
 
 #[derive(Clone)]
-pub struct SymbolicExecutorSetting {
-    pub prime: BigInt,
-    pub only_initialization_blocks: bool,
-    pub skip_initialization_blocks: bool,
-    pub off_trace: bool,
-    pub keep_track_constraints: bool,
-    pub substitute_output: bool,
-    pub propagate_assignments: bool,
+pub struct CoverageTracker {
+    paths: FxHashSet<u64>,
+    visit_counter: FxHashMap<usize, usize>,
+    current_path: Vec<(usize, usize, bool)>,
+}
+
+impl CoverageTracker {
+    pub fn new() -> Self {
+        CoverageTracker {
+            paths: FxHashSet::default(),
+            visit_counter: FxHashMap::default(),
+            current_path: Vec::new(),
+        }
+    }
+
+    pub fn record_branch(&mut self, meta_elem_id: usize, branch_cond: bool) {
+        *self.visit_counter.entry(meta_elem_id).or_insert(0) += 1;
+        self.current_path
+            .push((meta_elem_id, self.visit_counter[&meta_elem_id], branch_cond));
+    }
+
+    pub fn record_path(&mut self) {
+        let path_hash = self.hash_current_path();
+        self.paths.insert(path_hash);
+    }
+
+    fn hash_current_path(&self) -> u64 {
+        let mut hasher = FxHasher::default();
+        self.current_path.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn clear(&mut self) {
+        self.clear_current_path();
+        self.paths.clear();
+    }
+
+    pub fn clear_current_path(&mut self) {
+        self.visit_counter.clear();
+        self.current_path.clear();
+    }
+
+    pub fn coverage_count(&self) -> usize {
+        self.paths.len()
+    }
 }
 
 /// A symbolic execution engine for analyzing and executing statements symbolically.
@@ -309,6 +110,8 @@ pub struct SymbolicExecutor<'a> {
     pub setting: &'a SymbolicExecutorSetting,
     pub symbolic_store: SymbolicStore,
     pub cur_state: SymbolicState,
+    coverage_tracker: CoverageTracker,
+    enable_coverage_tracking: bool,
 }
 
 impl<'a> SymbolicExecutor<'a> {
@@ -336,8 +139,30 @@ impl<'a> SymbolicExecutor<'a> {
                 max_depth: 0,
             },
             cur_state: SymbolicState::new(),
+            coverage_tracker: CoverageTracker::new(),
             setting: setting,
+            enable_coverage_tracking: false,
         }
+    }
+
+    pub fn turn_on_coverage_tracking(&mut self) {
+        self.enable_coverage_tracking = true;
+    }
+
+    pub fn turn_off_coverage_tracking(&mut self) {
+        self.enable_coverage_tracking = false;
+    }
+
+    pub fn record_path(&mut self) {
+        self.coverage_tracker.record_path();
+    }
+
+    pub fn coverage_count(&self) -> usize {
+        self.coverage_tracker.coverage_count()
+    }
+
+    pub fn clear_coverage_tracker(&mut self) {
+        self.coverage_tracker.clear();
     }
 
     /// Clears the current state and resets the symbolic executor.
@@ -348,6 +173,7 @@ impl<'a> SymbolicExecutor<'a> {
         self.cur_state = SymbolicState::new();
         self.symbolic_store.clear();
         self.symbolic_library.clear_function_counter();
+        self.coverage_tracker.clear_current_path();
     }
 
     /// Feeds arguments into current state variables.
@@ -363,12 +189,11 @@ impl<'a> SymbolicExecutor<'a> {
         let mut name2id = self.symbolic_library.name2id.clone();
         let mut id2name = self.symbolic_library.id2name.clone();
         for (n, a) in names.iter().zip(args.iter()) {
-            let evaled_a = self.evaluate_expression(&DebugExpression::from(
-                a.clone(),
-                &mut name2id,
-                &mut id2name,
-            ));
-            let simplified_a = self.simplify_variables(&evaled_a, true, false);
+            let evaled_a = self.evaluate_expression(
+                &DebugExpression::from(a.clone(), &mut name2id, &mut id2name),
+                usize::MAX,
+            );
+            let simplified_a = self.simplify_variables(&evaled_a, usize::MAX, true, false);
             let sym_name = SymbolicName::new(name2id[n], self.cur_state.owner_name.clone(), None);
             let cond = SymbolicValue::AssignEq(
                 Rc::new(SymbolicValue::Variable(sym_name.clone())),
@@ -492,27 +317,32 @@ impl<'a> SymbolicExecutor<'a> {
     /// # Arguments
     ///
     /// * `access` - The `Access` to evaluate.
+    /// * `elem_id` - Unique element id
     ///
     /// # Returns
     ///
     /// A `SymbolicAccess` representing the evaluated access.
-    fn evaluate_access(&mut self, access: &DebugAccess) -> SymbolicAccess {
+    fn evaluate_access(&mut self, access: &DebugAccess, elem_id: usize) -> SymbolicAccess {
         match &access {
             DebugAccess::ComponentAccess(sym_name) => {
                 SymbolicAccess::ComponentAccess(sym_name.clone())
             }
             DebugAccess::ArrayAccess(expr) => {
-                let tmp_e = self.evaluate_expression(&expr);
-                SymbolicAccess::ArrayAccess(self.simplify_variables(&tmp_e, false, false))
+                let tmp_e = self.evaluate_expression(&expr, elem_id);
+                SymbolicAccess::ArrayAccess(self.simplify_variables(&tmp_e, elem_id, false, false))
             }
         }
     }
 
-    pub fn evaluate_dimension(&mut self, dims: &Vec<DebugExpression>) -> Vec<usize> {
+    pub fn evaluate_dimension(
+        &mut self,
+        dims: &Vec<DebugExpression>,
+        elem_id: usize,
+    ) -> Vec<usize> {
         dims.iter()
             .map(|arg0: &DebugExpression| {
-                let evaled_arg0 = self.evaluate_expression(arg0);
-                let simplified_arg0 = self.simplify_variables(&evaled_arg0, false, false);
+                let evaled_arg0 = self.evaluate_expression(arg0, elem_id);
+                let simplified_arg0 = self.simplify_variables(&evaled_arg0, elem_id, false, false);
                 if let SymbolicValue::ConstantInt(bint) = &simplified_arg0 {
                     bint.to_usize().unwrap()
                 } else {
@@ -530,6 +360,7 @@ impl<'a> SymbolicExecutor<'a> {
     /// # Arguments
     ///
     /// * `sym_val` - The symbolic expression to simplify.
+    /// * `elem_id` - Unique element id
     /// * `only_constatant_simplification`
     /// * `only_variable_simplification`
     ///
@@ -537,8 +368,9 @@ impl<'a> SymbolicExecutor<'a> {
     ///
     /// A new `SymbolicValue` representing the simplified expression.
     fn simplify_variables(
-        &self,
+        &mut self,
         sym_val: &SymbolicValue,
+        elem_id: usize,
         only_constatant_simplification: bool,
         only_variable_simplification: bool,
     ) -> SymbolicValue {
@@ -590,11 +422,13 @@ impl<'a> SymbolicExecutor<'a> {
             SymbolicValue::BinaryOp(lv, infix_op, rv) => {
                 let lhs = self.simplify_variables(
                     lv,
+                    elem_id,
                     only_constatant_simplification,
                     only_variable_simplification,
                 );
                 let rhs = self.simplify_variables(
                     rv,
+                    elem_id,
                     only_constatant_simplification,
                     only_variable_simplification,
                 );
@@ -603,33 +437,49 @@ impl<'a> SymbolicExecutor<'a> {
             SymbolicValue::Conditional(cond, then_val, else_val) => {
                 let simplified_cond = self.simplify_variables(
                     cond,
+                    elem_id,
                     only_constatant_simplification,
                     only_variable_simplification,
                 );
                 match simplified_cond {
-                    SymbolicValue::ConstantBool(true) => self.simplify_variables(
-                        then_val,
-                        only_constatant_simplification,
-                        only_variable_simplification,
-                    ),
-                    SymbolicValue::ConstantBool(false) => self.simplify_variables(
-                        else_val,
-                        only_constatant_simplification,
-                        only_variable_simplification,
-                    ),
+                    SymbolicValue::ConstantBool(true) => {
+                        if self.enable_coverage_tracking {
+                            self.coverage_tracker.record_branch(elem_id, true);
+                        }
+                        self.simplify_variables(
+                            then_val,
+                            elem_id,
+                            only_constatant_simplification,
+                            only_variable_simplification,
+                        )
+                    }
+                    SymbolicValue::ConstantBool(false) => {
+                        if self.enable_coverage_tracking {
+                            self.coverage_tracker.record_branch(elem_id, false);
+                        }
+                        self.simplify_variables(
+                            else_val,
+                            elem_id,
+                            only_constatant_simplification,
+                            only_variable_simplification,
+                        )
+                    }
                     _ => SymbolicValue::Conditional(
                         Rc::new(self.simplify_variables(
                             cond,
+                            elem_id,
                             only_constatant_simplification,
                             only_variable_simplification,
                         )),
                         Rc::new(self.simplify_variables(
                             then_val,
+                            elem_id,
                             only_constatant_simplification,
                             only_variable_simplification,
                         )),
                         Rc::new(self.simplify_variables(
                             else_val,
+                            elem_id,
                             only_constatant_simplification,
                             only_variable_simplification,
                         )),
@@ -639,6 +489,7 @@ impl<'a> SymbolicExecutor<'a> {
             SymbolicValue::UnaryOp(prefix_op, value) => {
                 let simplified_sym_val = self.simplify_variables(
                     value,
+                    elem_id,
                     only_constatant_simplification,
                     only_variable_simplification,
                 );
@@ -660,6 +511,7 @@ impl<'a> SymbolicExecutor<'a> {
                     .map(|e| {
                         Rc::new(self.simplify_variables(
                             e,
+                            elem_id,
                             only_constatant_simplification,
                             only_variable_simplification,
                         ))
@@ -672,6 +524,7 @@ impl<'a> SymbolicExecutor<'a> {
                     .map(|e| {
                         Rc::new(self.simplify_variables(
                             e,
+                            elem_id,
                             only_constatant_simplification,
                             only_variable_simplification,
                         ))
@@ -681,11 +534,13 @@ impl<'a> SymbolicExecutor<'a> {
             SymbolicValue::UniformArray(element, count) => SymbolicValue::UniformArray(
                 Rc::new(self.simplify_variables(
                     element,
+                    elem_id,
                     only_constatant_simplification,
                     only_variable_simplification,
                 )),
                 Rc::new(self.simplify_variables(
                     count,
+                    elem_id,
                     only_constatant_simplification,
                     only_variable_simplification,
                 )),
@@ -696,6 +551,7 @@ impl<'a> SymbolicExecutor<'a> {
                     .map(|arg| {
                         Rc::new(self.simplify_variables(
                             arg,
+                            elem_id,
                             only_constatant_simplification,
                             only_variable_simplification,
                         ))
@@ -714,11 +570,12 @@ impl<'a> SymbolicExecutor<'a> {
     /// # Arguments
     ///
     /// * `expr` - The `DebugExpression` to evaluate.
+    /// * `elem_id` - Unique element id
     ///
     /// # Returns
     ///
     /// A `SymbolicValue` representing the evaluated expression.
-    fn evaluate_expression(&mut self, expr: &DebugExpression) -> SymbolicValue {
+    fn evaluate_expression(&mut self, expr: &DebugExpression, elem_id: usize) -> SymbolicValue {
         match &expr {
             DebugExpression::Number(value) => SymbolicValue::ConstantInt(value.clone()),
             DebugExpression::Variable { id, access } => {
@@ -731,7 +588,7 @@ impl<'a> SymbolicExecutor<'a> {
                     let mut component_name = None;
                     let mut dims = Vec::new();
                     for acc in access {
-                        let evaled_access = self.evaluate_access(&acc.clone());
+                        let evaled_access = self.evaluate_access(&acc.clone(), elem_id);
                         match evaled_access {
                             SymbolicAccess::ComponentAccess(tmp_name) => {
                                 component_name = Some(tmp_name.clone());
@@ -751,17 +608,17 @@ impl<'a> SymbolicExecutor<'a> {
                         }
                     }
 
-                    self.construct_symbolic_name(*id, access).1
+                    self.construct_symbolic_name(*id, access, elem_id).1
                 };
                 SymbolicValue::Variable(resolved_sym_name)
             }
             DebugExpression::InfixOp { lhe, infix_op, rhe } => {
-                let lhs = self.evaluate_expression(lhe);
-                let rhs = self.evaluate_expression(rhe);
+                let lhs = self.evaluate_expression(lhe, elem_id);
+                let rhs = self.evaluate_expression(rhe, elem_id);
                 SymbolicValue::BinaryOp(Rc::new(lhs), infix_op.clone(), Rc::new(rhs))
             }
             DebugExpression::PrefixOp { prefix_op, rhe } => {
-                let expr = self.evaluate_expression(rhe);
+                let expr = self.evaluate_expression(rhe, elem_id);
                 SymbolicValue::UnaryOp(prefix_op.clone(), Rc::new(expr))
             }
             DebugExpression::InlineSwitchOp {
@@ -769,45 +626,45 @@ impl<'a> SymbolicExecutor<'a> {
                 if_true,
                 if_false,
             } => {
-                let condition = self.evaluate_expression(cond);
-                let true_branch = self.evaluate_expression(if_true);
-                let false_branch = self.evaluate_expression(if_false);
+                let condition = self.evaluate_expression(cond, elem_id);
+                let true_branch = self.evaluate_expression(if_true, elem_id);
+                let false_branch = self.evaluate_expression(if_false, elem_id);
                 SymbolicValue::Conditional(
                     Rc::new(condition),
                     Rc::new(true_branch),
                     Rc::new(false_branch),
                 )
             }
-            DebugExpression::ParallelOp { rhe, .. } => self.evaluate_expression(rhe),
+            DebugExpression::ParallelOp { rhe, .. } => self.evaluate_expression(rhe, elem_id),
             DebugExpression::ArrayInLine { values } => {
                 let elements = values
                     .iter()
-                    .map(|v| Rc::new(self.evaluate_expression(v)))
+                    .map(|v| Rc::new(self.evaluate_expression(v, elem_id)))
                     .collect();
                 SymbolicValue::Array(elements)
             }
             DebugExpression::Tuple { values } => {
                 let elements = values
                     .iter()
-                    .map(|v| Rc::new(self.evaluate_expression(v)))
+                    .map(|v| Rc::new(self.evaluate_expression(v, elem_id)))
                     .collect();
                 SymbolicValue::Array(elements)
             }
             DebugExpression::UniformArray {
                 value, dimension, ..
             } => {
-                let evaluated_value = self.evaluate_expression(value);
-                let evaluated_dimension = self.evaluate_expression(dimension);
+                let evaluated_value = self.evaluate_expression(value, elem_id);
+                let evaluated_dimension = self.evaluate_expression(dimension, elem_id);
                 SymbolicValue::UniformArray(Rc::new(evaluated_value), Rc::new(evaluated_dimension))
             }
             DebugExpression::Call { id, args, .. } => {
                 let evaluated_args: Vec<_> = args
                     .iter()
-                    .map(|arg| self.evaluate_expression(arg))
+                    .map(|arg| self.evaluate_expression(arg, elem_id))
                     .collect();
                 let simplified_args = evaluated_args
                     .iter()
-                    .map(|arg| Rc::new(self.simplify_variables(&arg, false, false)))
+                    .map(|arg| Rc::new(self.simplify_variables(&arg, elem_id, false, false)))
                     .collect();
                 if self.symbolic_library.template_library.contains_key(id) {
                     SymbolicValue::Call(*id, simplified_args)
@@ -882,30 +739,12 @@ impl<'a> SymbolicExecutor<'a> {
                     panic!("Unknown Callee: {}", self.symbolic_library.id2name[id]);
                 }
             }
-            /*
-            DebugExpression::BusCall { id, args, .. } => {
-                let evaluated_args = args.iter()
-                    .map(|arg| self.evaluate_expression(&DebugExpression(arg.clone())))
-                    .collect();
-                SymbolicValue::FunctionCall(format!("Bus_{}", id), evaluated_args)
-            }
-            DebugExpression::AnonymousComp { id, params, signals, .. } => {
-                let evaluated_params = params.iter()
-                    .map(|param| self.evaluate_expression(&DebugExpression(param.clone())))
-                    .collect();
-                let evaluated_signals = signals.iter()
-                    .map(|signal| self.evaluate_expression(&DebugExpression(signal.clone())))
-                    .collect();
-                SymbolicValue::FunctionCall(format!("AnonymousComp_{}", id),
-                    [evaluated_params, evaluated_signals].concat())
-            }*/
-            // Handle other expression types
             _ => {
+                // We currently do not support BusCall and AnonymousComp.
                 panic!(
                     "Unhandled expression type: {}",
                     expr.lookup_fmt(&self.symbolic_library.id2name, 0)
                 );
-                //SymbolicValue::Variable(format!("Unhandled({:?})", expr), "".to_string())
             }
         }
     }
@@ -954,15 +793,22 @@ impl<'a> SymbolicExecutor<'a> {
         {
             self.trace_if_enabled(meta);
 
-            let evaled_cond = self.evaluate_expression(cond);
-            let simplified_condition = self.simplify_variables(&evaled_cond, true, false);
+            let evaled_cond = self.evaluate_expression(cond, meta.elem_id);
+            let simplified_condition =
+                self.simplify_variables(&evaled_cond, meta.elem_id, true, false);
 
             match simplified_condition {
                 SymbolicValue::ConstantBool(true) => {
+                    if self.enable_coverage_tracking {
+                        self.coverage_tracker.record_branch(meta.elem_id, true);
+                    }
                     self.execute(&vec![*if_case.clone()], 0);
                 }
                 SymbolicValue::ConstantBool(false) => {
                     if let Some(stmt) = else_case {
+                        if self.enable_coverage_tracking {
+                            self.coverage_tracker.record_branch(meta.elem_id, false);
+                        }
                         self.execute(&vec![*stmt.clone()], 0);
                     }
                 }
@@ -985,10 +831,12 @@ impl<'a> SymbolicExecutor<'a> {
         {
             self.trace_if_enabled(meta);
 
-            let evaled_rhe = self.evaluate_expression(rhe);
-            let simplified_rhe = self.simplify_variables(&evaled_rhe, true, false);
-            let (left_base_name, left_var_name) = self.construct_symbolic_name(*var, access);
+            let evaled_rhe = self.evaluate_expression(rhe, meta.elem_id);
+            let simplified_rhe = self.simplify_variables(&evaled_rhe, meta.elem_id, true, false);
+            let (left_base_name, left_var_name) =
+                self.construct_symbolic_name(*var, access, meta.elem_id);
 
+            let mut is_array_assignment = false;
             let mut is_bulk_assignment = false;
             let mut left_var_names = Vec::new();
             let mut right_values = Vec::new();
@@ -996,7 +844,13 @@ impl<'a> SymbolicExecutor<'a> {
 
             match &simplified_rhe {
                 SymbolicValue::Array(_) => {
-                    self.handle_array_substitution(&left_var_name, &simplified_rhe);
+                    is_array_assignment = true;
+                    self.handle_array_substitution(
+                        op,
+                        &left_var_name,
+                        &simplified_rhe,
+                        meta.elem_id,
+                    );
                 }
                 _ => {
                     let dim_of_left_var = left_var_name.get_dim();
@@ -1014,6 +868,7 @@ impl<'a> SymbolicExecutor<'a> {
                             &mut left_var_names,
                             &mut right_values,
                             &mut symbolic_positions,
+                            meta.elem_id,
                         )
                     } else {
                         left_var_names.push(left_var_name.clone());
@@ -1032,14 +887,16 @@ impl<'a> SymbolicExecutor<'a> {
                     args,
                     &left_var_name,
                     &simplified_rhe,
+                    meta.elem_id,
                 );
             } else {
                 if is_bulk_assignment {
                     for (lvn, rv) in left_var_names.iter().zip(right_values.iter()) {
                         self.handle_non_call_substitution(op, &lvn, &rv);
                     }
-                } else {
-                    let semi_simplified_rhe = self.simplify_variables(&evaled_rhe, true, true);
+                } else if !is_array_assignment {
+                    let semi_simplified_rhe =
+                        self.simplify_variables(&evaled_rhe, meta.elem_id, true, true);
                     self.handle_non_call_substitution(op, &left_var_name, &semi_simplified_rhe);
                 }
             }
@@ -1052,9 +909,16 @@ impl<'a> SymbolicExecutor<'a> {
                         &left_base_name,
                         &right_values,
                         &mut symbolic_positions,
+                        meta.elem_id,
                     );
                 } else {
-                    self.handle_component_access(*var, access, &left_base_name, &simplified_rhe);
+                    self.handle_component_access(
+                        *var,
+                        access,
+                        &left_base_name,
+                        &simplified_rhe,
+                        meta.elem_id,
+                    );
                 }
             }
             self.execute(statements, cur_bid + 1);
@@ -1068,10 +932,10 @@ impl<'a> SymbolicExecutor<'a> {
         {
             self.trace_if_enabled(&meta);
 
-            let lhe_val = self.evaluate_expression(lhe);
-            let rhe_val = self.evaluate_expression(rhe);
-            let simplified_lhe_val = self.simplify_variables(&lhe_val, true, false);
-            let simplified_rhe_val = self.simplify_variables(&rhe_val, true, false);
+            let lhe_val = self.evaluate_expression(lhe, meta.elem_id);
+            let rhe_val = self.evaluate_expression(rhe, meta.elem_id);
+            let simplified_lhe_val = self.simplify_variables(&lhe_val, meta.elem_id, true, false);
+            let simplified_rhe_val = self.simplify_variables(&rhe_val, meta.elem_id, true, false);
 
             if self.setting.keep_track_constraints {
                 match op {
@@ -1107,8 +971,8 @@ impl<'a> SymbolicExecutor<'a> {
         {
             self.trace_if_enabled(&meta);
             // Symbolic execution of loops is complex. This is a simplified approach.
-            let tmp_cond = self.evaluate_expression(cond);
-            let evaled_condition = self.simplify_variables(&tmp_cond, true, false);
+            let tmp_cond = self.evaluate_expression(cond, meta.elem_id);
+            let evaled_condition = self.simplify_variables(&tmp_cond, meta.elem_id, true, false);
 
             if let SymbolicValue::ConstantBool(flag) = evaled_condition {
                 if flag {
@@ -1128,8 +992,8 @@ impl<'a> SymbolicExecutor<'a> {
     fn handle_return(&mut self, statements: &Vec<DebugStatement>, cur_bid: usize) {
         if let DebugStatement::Return { meta, value, .. } = &statements[cur_bid] {
             self.trace_if_enabled(&meta);
-            let tmp_val = self.evaluate_expression(value);
-            let return_value = self.simplify_variables(&tmp_val, true, false);
+            let tmp_val = self.evaluate_expression(value, meta.elem_id);
+            let return_value = self.simplify_variables(&tmp_val, meta.elem_id, true, false);
 
             // Handle return value (e.g., store in a special "return" variable)
             if !self.symbolic_library.id2name.contains_key(&usize::MAX) {
@@ -1165,10 +1029,10 @@ impl<'a> SymbolicExecutor<'a> {
         if let DebugStatement::ConstraintEquality { meta, lhe, rhe } = &statements[cur_bid] {
             self.trace_if_enabled(&meta);
 
-            let lhe_val = self.evaluate_expression(lhe);
-            let rhe_val = self.evaluate_expression(rhe);
-            let simplified_lhe_val = self.simplify_variables(&lhe_val, false, true);
-            let simplified_rhe_val = self.simplify_variables(&rhe_val, false, true);
+            let lhe_val = self.evaluate_expression(lhe, meta.elem_id);
+            let rhe_val = self.evaluate_expression(rhe, meta.elem_id);
+            let simplified_lhe_val = self.simplify_variables(&lhe_val, meta.elem_id, false, true);
+            let simplified_rhe_val = self.simplify_variables(&rhe_val, meta.elem_id, false, true);
 
             let cond = SymbolicValue::BinaryOp(
                 Rc::new(simplified_lhe_val),
@@ -1180,7 +1044,7 @@ impl<'a> SymbolicExecutor<'a> {
                 self.cur_state.push_trace_constraint(&cond);
                 self.cur_state.push_side_constraint(&cond);
             } else {
-                let simplified_cond = self.simplify_variables(&cond, false, false);
+                let simplified_cond = self.simplify_variables(&cond, meta.elem_id, false, false);
                 if let SymbolicValue::ConstantBool(false) = simplified_cond {
                     self.cur_state.is_failed = true;
                 }
@@ -1193,8 +1057,8 @@ impl<'a> SymbolicExecutor<'a> {
     fn handle_assert(&mut self, statements: &Vec<DebugStatement>, cur_bid: usize) {
         if let DebugStatement::Assert { meta, arg, .. } = &statements[cur_bid] {
             self.trace_if_enabled(&meta);
-            let expr = self.evaluate_expression(&arg);
-            let condition = self.simplify_variables(&expr, true, true);
+            let expr = self.evaluate_expression(&arg, meta.elem_id);
+            let condition = self.simplify_variables(&expr, meta.elem_id, true, true);
             if self.setting.keep_track_constraints {
                 self.cur_state.push_trace_constraint(&condition);
             }
@@ -1224,11 +1088,18 @@ impl<'a> SymbolicExecutor<'a> {
     ///
     /// * `left_var_name` - The symbolic name of the array variable being assigned.
     /// * `elements` - A vector of reference-counted symbolic values representing the array elements.
+    /// * `elem_id` - Unique element id
     ///
     /// # Side Effects
     ///
     /// Updates the current symbolic state with individual array element assignments.
-    fn handle_array_substitution(&mut self, left_var_name: &SymbolicName, arr: &SymbolicValue) {
+    fn handle_array_substitution(
+        &mut self,
+        op: &DebugAssignOp,
+        left_var_name: &SymbolicName,
+        arr: &SymbolicValue,
+        elem_id: usize,
+    ) {
         let mut base_array = SymbolicValue::Array(Vec::new());
         if self
             .cur_state
@@ -1244,7 +1115,7 @@ impl<'a> SymbolicExecutor<'a> {
                     let mut concrete_counts = Vec::new();
                     let mut is_success = true;
                     for c in counts.iter() {
-                        let s = self.simplify_variables(&c, false, false);
+                        let s = self.simplify_variables(&c, elem_id, false, false);
                         if let SymbolicValue::ConstantInt(v) = s {
                             concrete_counts.push(v.to_usize().unwrap())
                         } else {
@@ -1273,6 +1144,8 @@ impl<'a> SymbolicExecutor<'a> {
             }
             new_left_var_name.access = Some(access);
             new_left_var_name.update_hash();
+
+            self.handle_non_call_substitution(op, &new_left_var_name, elem);
             self.cur_state.set_sym_val(new_left_var_name, elem.clone());
 
             if let SymbolicValue::Array(ref arr) = base_array {
@@ -1303,6 +1176,7 @@ impl<'a> SymbolicExecutor<'a> {
     /// * `args` - The arguments passed to the call.
     /// * `var_name` - The symbolic name where the call result is being assigned.
     /// * `base_name` - The base symbolic name for component initialization.
+    /// * `elem_id` - Unique element id
     ///
     /// # Side Effects
     ///
@@ -1314,6 +1188,7 @@ impl<'a> SymbolicExecutor<'a> {
         args: &Vec<Rc<SymbolicValue>>,
         var_name: &SymbolicName,
         right_call: &SymbolicValue,
+        elem_id: usize,
     ) {
         let is_mutable = match op {
             DebugAssignOp(AssignOp::AssignSignal) => true,
@@ -1324,7 +1199,7 @@ impl<'a> SymbolicExecutor<'a> {
             .template_library
             .contains_key(callee_name)
         {
-            self.initialize_template_component(callee_name, args, var_name);
+            self.initialize_template_component(callee_name, args, var_name, elem_id);
         } else {
             let cont = SymbolicValue::AssignCall(
                 Rc::new(SymbolicValue::Variable(var_name.clone())),
@@ -1340,6 +1215,7 @@ impl<'a> SymbolicExecutor<'a> {
         callee_name: &usize,
         args: &Vec<Rc<SymbolicValue>>,
         var_name: &SymbolicName,
+        elem_id: usize,
     ) {
         let mut subse_setting = self.setting.clone();
         subse_setting.only_initialization_blocks = true;
@@ -1377,8 +1253,11 @@ impl<'a> SymbolicExecutor<'a> {
 
         let mut symbol_optional_binding_map = FxHashMap::default();
 
-        se_for_initialization
-            .initialize_template_inputs(&template, &mut symbol_optional_binding_map);
+        se_for_initialization.initialize_template_inputs(
+            &template,
+            &mut symbol_optional_binding_map,
+            elem_id,
+        );
 
         self.restore_escaped_variables(&escaped_vars);
 
@@ -1397,9 +1276,10 @@ impl<'a> SymbolicExecutor<'a> {
         &mut self,
         template: &SymbolicTemplate,
         inputs_of_component: &mut FxHashMap<SymbolicName, Option<SymbolicValue>>,
+        elem_id: usize,
     ) {
         for id in &template.input_ids {
-            let dims = self.evaluate_dimension(&template.id2dimensions[id]);
+            let dims = self.evaluate_dimension(&template.id2dimensions[id], elem_id);
             register_array_elements(*id, &dims, None, inputs_of_component);
         }
     }
@@ -1417,8 +1297,9 @@ impl<'a> SymbolicExecutor<'a> {
         base_name: &SymbolicName,
         symbolic_values: &Vec<SymbolicValue>,
         symbolic_positions: &mut Vec<Vec<SymbolicAccess>>,
+        elem_id: usize,
     ) {
-        let (component_name, pre_dims, post_dims) = self.parse_component_access(access);
+        let (component_name, pre_dims, post_dims) = self.parse_component_access(access, elem_id);
 
         if let Some(component) = self.symbolic_store.components_store.get_mut(base_name) {
             for (sym_pos, sym_val) in symbolic_positions.iter().zip(symbolic_values.iter()) {
@@ -1458,6 +1339,7 @@ impl<'a> SymbolicExecutor<'a> {
         left_var_names: &mut Vec<SymbolicName>,
         right_values: &mut Vec<SymbolicValue>,
         symbolic_positions: &mut Vec<Vec<SymbolicAccess>>,
+        elem_id: usize,
     ) {
         if let SymbolicValue::Variable(ref right_var_name) = rhe {
             let omitted_dims = self.recover_omitted_dims(
@@ -1465,6 +1347,7 @@ impl<'a> SymbolicExecutor<'a> {
                 dim_of_left_var,
                 full_dim_of_left_var,
                 id_of_direct_owner,
+                elem_id,
             );
             let positions = generate_cartesian_product_indices(&omitted_dims);
             for p in positions {
@@ -1554,6 +1437,7 @@ impl<'a> SymbolicExecutor<'a> {
     /// * `access` - A vector of accesses (e.g., array indices, component accesses).
     /// * `base_name` - The base symbolic name for the accessed component.
     /// * `value` - The symbolic value being assigned.
+    /// * `elem_id` - Unique element id
     ///
     /// # Side Effects
     ///
@@ -1564,8 +1448,9 @@ impl<'a> SymbolicExecutor<'a> {
         access: &Vec<DebugAccess>,
         base_name: &SymbolicName,
         value: &SymbolicValue,
+        elem_id: usize,
     ) {
-        let (component_name, pre_dims, post_dims) = self.parse_component_access(access);
+        let (component_name, pre_dims, post_dims) = self.parse_component_access(access, elem_id);
 
         if let Some(component) = self.symbolic_store.components_store.get_mut(base_name) {
             let inp_name = SymbolicName::new(
@@ -1577,9 +1462,36 @@ impl<'a> SymbolicExecutor<'a> {
                     Some(post_dims)
                 },
             );
-            component
-                .symbol_optional_binding_map
-                .insert(inp_name, Some(value.clone()));
+
+            match value {
+                SymbolicValue::Array(..) => {
+                    let enumerated_elements = enumerate_array(value);
+                    for (pos, elem) in enumerated_elements {
+                        let mut new_inp_name = inp_name.clone();
+                        let mut access = new_inp_name.access.unwrap_or_default();
+                        for p in &pos {
+                            access.push(SymbolicAccess::ArrayAccess(SymbolicValue::ConstantInt(
+                                BigInt::from_usize(*p).unwrap(),
+                            )));
+                        }
+                        new_inp_name.access = Some(access);
+                        new_inp_name.update_hash();
+                        component
+                            .symbol_optional_binding_map
+                            .insert(new_inp_name, Some(elem.clone()));
+                    }
+
+                    // TODO: is this line necessary?
+                    component
+                        .symbol_optional_binding_map
+                        .insert(inp_name, Some(value.clone()));
+                }
+                _ => {
+                    component
+                        .symbol_optional_binding_map
+                        .insert(inp_name, Some(value.clone()));
+                }
+            }
         }
 
         if self.is_ready(base_name) {
@@ -1590,6 +1502,7 @@ impl<'a> SymbolicExecutor<'a> {
     fn parse_component_access(
         &mut self,
         access: &Vec<DebugAccess>,
+        elem_id: usize,
     ) -> (usize, Vec<SymbolicAccess>, Vec<SymbolicAccess>) {
         let mut component_name = 0;
         let mut pre_dims = Vec::new();
@@ -1597,7 +1510,7 @@ impl<'a> SymbolicExecutor<'a> {
         let mut found_component = false;
 
         for acc in access {
-            let evaled_access = self.evaluate_access(acc);
+            let evaled_access = self.evaluate_access(acc, elem_id);
             match evaled_access {
                 SymbolicAccess::ComponentAccess(tmp_name) => {
                     found_component = true;
@@ -1756,6 +1669,7 @@ impl<'a> SymbolicExecutor<'a> {
     ///
     /// * `base_id` - The base identifier for the variable or component.
     /// * `access` - A vector of `DebugAccess` representing the access pattern.
+    /// * `elem_id` - Unique element id
     ///
     /// # Returns
     ///
@@ -1781,6 +1695,7 @@ impl<'a> SymbolicExecutor<'a> {
         &mut self,
         base_id: usize,
         access: &Vec<DebugAccess>,
+        elem_id: usize,
     ) -> (SymbolicName, SymbolicName) {
         // Style of component access: owner[access].component[access]
         // Example: bits[0].dblIn[0];
@@ -1789,7 +1704,7 @@ impl<'a> SymbolicExecutor<'a> {
         let mut post_dims = Vec::new();
         let mut found_component = false;
         for acc in access {
-            let evaled_access = self.evaluate_access(&acc.clone());
+            let evaled_access = self.evaluate_access(&acc.clone(), elem_id);
             match evaled_access {
                 SymbolicAccess::ComponentAccess(tmp_name) => {
                     found_component = true;
@@ -1907,6 +1822,7 @@ impl<'a> SymbolicExecutor<'a> {
         cur_dim: usize,
         full_dim: usize,
         id_of_direct_owner: usize,
+        elem_id: usize,
     ) -> Vec<usize> {
         let mut omitted_dims = Vec::new();
         for i in cur_dim..full_dim {
@@ -1923,8 +1839,8 @@ impl<'a> SymbolicExecutor<'a> {
                     [&var_name.id][i]
                     .clone()
             };
-            let evaled_dim = self.evaluate_expression(&dim_clone);
-            let simplified_dim = self.simplify_variables(&evaled_dim, false, false);
+            let evaled_dim = self.evaluate_expression(&dim_clone, elem_id);
+            let simplified_dim = self.simplify_variables(&evaled_dim, elem_id, false, false);
             if let SymbolicValue::ConstantInt(ref num) = simplified_dim {
                 omitted_dims.push(num.to_usize().unwrap());
             }

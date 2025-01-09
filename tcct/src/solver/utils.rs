@@ -13,7 +13,8 @@ use program_structure::ast::ExpressionInfixOpcode;
 use program_structure::ast::ExpressionPrefixOpcode;
 
 use crate::executor::debug_ast::{DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode};
-use crate::executor::symbolic_execution::{SymbolicExecutor, SymbolicExecutorSetting};
+use crate::executor::symbolic_execution::SymbolicExecutor;
+use crate::executor::symbolic_setting::SymbolicExecutorSetting;
 use crate::executor::symbolic_value::{
     evaluate_binary_op, OwnerName, SymbolicLibrary, SymbolicName, SymbolicValue, SymbolicValueRef,
 };
@@ -141,7 +142,7 @@ pub fn is_vulnerable(vr: &VerificationResult) -> bool {
 
 /// Configures the settings for the verification process.
 pub struct VerificationSetting {
-    pub id: String,
+    pub target_template_name: String,
     pub prime: BigInt,
     pub range: BigInt,
     pub quick_mode: bool,
@@ -188,11 +189,6 @@ pub fn extract_variables_from_symbolic_value(
         SymbolicValue::BinaryOp(lhs, _, rhs) => {
             extract_variables_from_symbolic_value(&lhs, variables);
             extract_variables_from_symbolic_value(&rhs, variables);
-        }
-        SymbolicValue::Conditional(cond, if_true, if_false) => {
-            extract_variables_from_symbolic_value(&cond, variables);
-            extract_variables_from_symbolic_value(&if_true, variables);
-            extract_variables_from_symbolic_value(&if_false, variables);
         }
         SymbolicValue::UnaryOp(_, expr) => extract_variables_from_symbolic_value(&expr, variables),
         SymbolicValue::Array(elements) | SymbolicValue::Tuple(elements) => {
@@ -746,7 +742,7 @@ pub fn verify_assignment(
             &setting.template_param_names,
             &setting.template_param_values,
         );
-        sexe.concrete_execute(&setting.id, assignment);
+        sexe.concrete_execute(&setting.target_template_name, assignment);
 
         if sexe.cur_state.is_failed {
             return VerificationResult::UnderConstrained(UnderConstrainedType::Deterministic);
@@ -754,7 +750,8 @@ pub fn verify_assignment(
 
         let mut result = VerificationResult::WellConstrained;
         for (k, v) in assignment {
-            if sexe.symbolic_library.template_library[&sexe.symbolic_library.name2id[&setting.id]]
+            if sexe.symbolic_library.template_library
+                [&sexe.symbolic_library.name2id[&setting.target_template_name]]
                 .output_ids
                 .contains(&k.id)
             {
