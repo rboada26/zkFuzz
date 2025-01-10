@@ -12,7 +12,9 @@ use program_structure::ast::Expression;
 use program_structure::ast::ExpressionInfixOpcode;
 use program_structure::ast::ExpressionPrefixOpcode;
 
-use crate::executor::debug_ast::{DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode};
+use crate::executor::debug_ast::{
+    DebuggableExpressionInfixOpcode, DebuggableExpressionPrefixOpcode,
+};
 use crate::executor::symbolic_execution::SymbolicExecutor;
 use crate::executor::symbolic_setting::SymbolicExecutorSetting;
 use crate::executor::symbolic_value::{
@@ -22,8 +24,8 @@ use crate::executor::symbolic_value::{
 #[derive(Clone)]
 pub enum UnderConstrainedType {
     UnusedOutput,
-    Deterministic,
-    NonDeterministic(String, BigInt),
+    UnexpectedTrace(String),
+    NonDeterministic(SymbolicName, String, BigInt),
 }
 
 /// Represents the result of a constraint verification process.
@@ -43,20 +45,20 @@ impl fmt::Display for VerificationResult {
         let output = match self {
             VerificationResult::UnderConstrained(typ) => match typ {
                 UnderConstrainedType::UnusedOutput => {
-                    "👻 UnderConstrained (Unused-Output) 👻".red().bold()
+                    "👻 UnderConstrained (Unused-Output) 👻".red().bold().to_string()
                 }
-                UnderConstrainedType::Deterministic => {
-                    "🧟 UnderConstrained (Deterministic) 🧟".red().bold()
+                UnderConstrainedType::UnexpectedTrace(violated_condition) => {
+                    format!("{} {}", "🧟 UnderConstrained (Unexpected-Trace) 🧟\n║           Violated Condition:".red().bold(), violated_condition)
                 }
-                UnderConstrainedType::NonDeterministic(name, value) => format!(
+                UnderConstrainedType::NonDeterministic(_sym_name, name, value) => format!(
                     "🔥 UnderConstrained (Non-Deterministic) 🔥\n║           ➡️ `{}` is expected to be `{}`",
                     name, value
                 )
                 .red()
-                .bold(),
+                .bold().to_string(),
             },
-            VerificationResult::OverConstrained => "💣 OverConstrained 💣".yellow().bold(),
-            VerificationResult::WellConstrained => "✅ WellConstrained ✅".green().bold(),
+            VerificationResult::OverConstrained => "💣 OverConstrained 💣".yellow().bold().to_string(),
+            VerificationResult::WellConstrained => "✅ WellConstrained ✅".green().bold().to_string(),
         };
         write!(f, "{output}")
     }
@@ -66,6 +68,7 @@ impl fmt::Display for VerificationResult {
 #[derive(Clone)]
 pub struct CounterExample {
     pub flag: VerificationResult,
+    pub target_output: Option<SymbolicName>,
     pub assignment: FxHashMap<SymbolicName, BigInt>,
 }
 
@@ -94,15 +97,32 @@ impl CounterExample {
         s += &format!("{}", "║".red());
         s += &format!("    {} \n", "🔍 Assignment Details:".blue().bold());
 
+        let mut is_target_output = false;
         for (var_name, value) in &self.assignment {
             if var_name.owner.len() == 1 {
                 s += &format!("{}", "║".red());
-                s += &format!(
-                    "           {} {} = {} \n",
-                    "➡️".cyan(),
-                    var_name.lookup_fmt(lookup).magenta().bold(),
-                    value.to_string().bright_yellow()
-                );
+                if let Some(to) = &self.target_output {
+                    if *to == *var_name {
+                        is_target_output = true;
+                        s += &format!(
+                            "           {} {}{}{} \n",
+                            "➡️".cyan(),
+                            var_name.lookup_fmt(lookup).on_magenta().white().bold(),
+                            " = ".on_magenta().white().bold(),
+                            value.to_string().on_magenta().bright_yellow().bold()
+                        );
+                    }
+                }
+                if !is_target_output {
+                    s += &format!(
+                        "           {} {} = {} \n",
+                        "➡️".cyan(),
+                        var_name.lookup_fmt(lookup).magenta().bold(),
+                        value.to_string().bright_yellow()
+                    );
+                } else {
+                    is_target_output = false;
+                }
             }
         }
         for (var_name, value) in &self.assignment {
@@ -318,16 +338,18 @@ pub fn count_satisfied_constraints(
 
 pub fn emulate_symbolic_values(
     prime: &BigInt,
-    values: &[SymbolicValueRef],
+    traces: &[SymbolicValueRef],
     assignment: &mut FxHashMap<SymbolicName, BigInt>,
     symbolic_library: &mut SymbolicLibrary,
-) -> bool {
+) -> (bool, usize) {
     let mut success = true;
-    for value in values {
-        match value.as_ref() {
+    let mut failure_pos = 0;
+    for (i, inst) in traces.iter().enumerate() {
+        match inst.as_ref() {
             SymbolicValue::ConstantBool(b) => {
                 if !b {
                     success = false;
+                    failure_pos = i;
                 }
             }
             SymbolicValue::Assign(lhs, rhs, _)
@@ -347,12 +369,13 @@ pub fn emulate_symbolic_values(
                         }
                         _ => {
                             success = false;
+                            failure_pos = i;
                         }
                     }
                 } else {
                     panic!(
                         "Left hand of the assignment is not a variable: {}",
-                        value.lookup_fmt(&symbolic_library.id2name)
+                        inst.lookup_fmt(&symbolic_library.id2name)
                     );
                 }
             }
@@ -370,7 +393,7 @@ pub fn emulate_symbolic_values(
                             ExpressionInfixOpcode::NotEq => lv % prime != rv % prime,
                             _ => panic!(
                                 "Non-Boolean Operation: {}",
-                                value.lookup_fmt(&symbolic_library.id2name)
+                                inst.lookup_fmt(&symbolic_library.id2name)
                             ),
                         }
                     }
@@ -383,11 +406,12 @@ pub fn emulate_symbolic_values(
                     }
                     _ => panic!(
                         "Unassigned variables exist: {}",
-                        value.lookup_fmt(&symbolic_library.id2name)
+                        inst.lookup_fmt(&symbolic_library.id2name)
                     ),
                 };
                 if !flag {
                     success = false;
+                    failure_pos = i;
                 }
             }
             SymbolicValue::UnaryOp(op, expr) => {
@@ -397,25 +421,27 @@ pub fn emulate_symbolic_values(
                         ExpressionPrefixOpcode::BoolNot => !rv,
                         _ => panic!(
                             "Unassigned variables exist: {}",
-                            value.lookup_fmt(&symbolic_library.id2name)
+                            inst.lookup_fmt(&symbolic_library.id2name)
                         ),
                     },
                     _ => panic!(
                         "Non-Boolean Operation: {}",
-                        value.lookup_fmt(&symbolic_library.id2name)
+                        inst.lookup_fmt(&symbolic_library.id2name)
                     ),
                 };
                 if !flag {
                     success = false;
+                    failure_pos = i;
                 }
             }
             _ => panic!(
                 "A constraint should be one of `ConstantBool`, `Assign`, `AssignEq`, `AssignCall`, `BinaryOp` and `UnaryOp`. Found: {}",
-                value.lookup_fmt(&symbolic_library.id2name)
+                inst.lookup_fmt(&symbolic_library.id2name)
             ),
         }
     }
-    return success;
+
+    (success, failure_pos)
 }
 
 /// Evaluates a symbolic value given a variable assignment.
@@ -570,38 +596,38 @@ pub fn evaluate_symbolic_value(
 pub fn flip_op(value: &SymbolicValue) -> SymbolicValue {
     match value {
         SymbolicValue::UnaryOp(
-            DebugExpressionPrefixOpcode(ExpressionPrefixOpcode::BoolNot),
+            DebuggableExpressionPrefixOpcode(ExpressionPrefixOpcode::BoolNot),
             expr,
         ) => match (*expr.clone()).clone() {
             SymbolicValue::BinaryOp(lhs, op, rhs) => match &op.0 {
                 ExpressionInfixOpcode::Lesser => SymbolicValue::BinaryOp(
                     lhs.clone(),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Greater),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Greater),
                     rhs.clone(),
                 ),
                 ExpressionInfixOpcode::Greater => SymbolicValue::BinaryOp(
                     lhs.clone(),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Lesser),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Lesser),
                     rhs.clone(),
                 ),
                 ExpressionInfixOpcode::LesserEq => SymbolicValue::BinaryOp(
                     lhs.clone(),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::GreaterEq),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::GreaterEq),
                     rhs.clone(),
                 ),
                 ExpressionInfixOpcode::GreaterEq => SymbolicValue::BinaryOp(
                     lhs.clone(),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::LesserEq),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::LesserEq),
                     rhs.clone(),
                 ),
                 ExpressionInfixOpcode::Eq => SymbolicValue::BinaryOp(
                     lhs.clone(),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::NotEq),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::NotEq),
                     rhs.clone(),
                 ),
                 ExpressionInfixOpcode::NotEq => SymbolicValue::BinaryOp(
                     lhs.clone(),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
                     rhs.clone(),
                 ),
                 _ => value.clone(),
@@ -745,7 +771,7 @@ pub fn verify_assignment(
         sexe.concrete_execute(&setting.target_template_name, assignment);
 
         if sexe.cur_state.is_failed {
-            return VerificationResult::UnderConstrained(UnderConstrainedType::Deterministic);
+            return VerificationResult::WellConstrained;
         }
 
         let mut result = VerificationResult::WellConstrained;
@@ -777,6 +803,7 @@ pub fn verify_assignment(
                 if !is_equal_mod(&original_int_value, v, &setting.prime) {
                     result = VerificationResult::UnderConstrained(
                         UnderConstrainedType::NonDeterministic(
+                            k.clone(),
                             k.lookup_fmt(&sexe.symbolic_library.id2name),
                             original_int_value.clone(),
                         ),

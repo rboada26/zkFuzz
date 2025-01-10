@@ -9,9 +9,9 @@ use log::info;
 use num_bigint_dig::BigInt;
 use num_bigint_dig::RandBigInt;
 use num_traits::{One, Zero};
-use rand::rngs::ThreadRng;
+use rand::rngs::StdRng;
 use rand::seq::IteratorRandom;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -34,6 +34,7 @@ struct MutationSettings {
     fitness_function: String,
     mutation_rate: f64,
     crossover_rate: f64,
+    seed: u64,
 }
 
 impl Default for MutationSettings {
@@ -46,6 +47,7 @@ impl Default for MutationSettings {
             fitness_function: "error".to_string(),
             mutation_rate: 0.3,
             crossover_rate: 0.5,
+            seed: 0,
         }
     }
 }
@@ -119,7 +121,13 @@ pub fn mutation_test_search(
     let mutation_setting = load_settings_from_json(path_to_mutation_setting).unwrap();
     info!("\n{}", mutation_setting);
 
-    let mut rng = rand::thread_rng();
+    let seed = if mutation_setting.seed.is_zero() {
+        let mut seed_rng = rand::thread_rng();
+        seed_rng.gen()
+    } else {
+        mutation_setting.seed
+    };
+    let mut rng = StdRng::seed_from_u64(seed);
 
     // Initial Population of Mutated Programs
     let mut assign_pos = Vec::new();
@@ -154,10 +162,10 @@ pub fn mutation_test_search(
     ├─ #Side Constraints  : {}
     ├─ #Input Variables   : {}
     └─ #Mutation Candidate: {}",
-        trace_constraints.len(),
-        side_constraints.len(),
-        input_variables.len(),
-        assign_pos.len()
+        trace_constraints.len().to_string().bright_yellow(),
+        side_constraints.len().to_string().bright_yellow(),
+        input_variables.len().to_string().bright_yellow(),
+        assign_pos.len().to_string().bright_yellow()
     );
 
     let mut trace_population = initialize_trace_mutation(
@@ -169,6 +177,12 @@ pub fn mutation_test_search(
     let mut fitness_scores = vec![-setting.prime.clone(); mutation_setting.input_population_size];
     let mut input_population = Vec::new();
     let mut fitness_score_log = Vec::with_capacity(mutation_setting.max_generations);
+
+    println!(
+        "{} {}",
+        "🎲 Random Seed:",
+        seed.to_string().bold().bright_yellow(),
+    );
 
     for generation in 0..mutation_setting.max_generations {
         // Generate input population for this generation
@@ -241,10 +255,10 @@ pub fn mutation_test_search(
 
         if evaluations[best_idx].1.is_zero() {
             print!(
-                "\r\x1b[2KGeneration: {}/{} ({:.3})",
+                "\r\x1b[2K🧬 Generation: {}/{} ({:.3})",
                 generation, mutation_setting.max_generations, 0
             );
-            println!("\n └─ Solution found in generation {}", generation);
+            println!("\n    └─ Solution found in generation {}", generation);
 
             /*
             let _ = save_auxiliray_result(
@@ -258,7 +272,7 @@ pub fn mutation_test_search(
         }
 
         print!(
-            "\r\x1b[2KGeneration: {}/{} ({:.3})",
+            "\r\x1b[2K🧬 Generation: {}/{} ({:.3})",
             generation, mutation_setting.max_generations, fitness_scores[best_idx]
         );
         io::stdout().flush().unwrap();
@@ -282,7 +296,7 @@ pub fn mutation_test_search(
     None
 }
 
-fn draw_random_constant(setting: &VerificationSetting, rng: &mut ThreadRng) -> BigInt {
+fn draw_random_constant(setting: &VerificationSetting, rng: &mut StdRng) -> BigInt {
     if rng.gen::<bool>() {
         rng.gen_bigint_range(
             &(BigInt::from_str("10").unwrap() * -BigInt::one()),
@@ -300,7 +314,7 @@ fn initialize_input_population(
     variables: &[SymbolicName],
     size: usize,
     setting: &VerificationSetting,
-    rng: &mut ThreadRng,
+    rng: &mut StdRng,
 ) -> Vec<FxHashMap<SymbolicName, BigInt>> {
     (0..size)
         .map(|_| {
@@ -341,7 +355,7 @@ fn mutate_input_population_with_coverage_maximization(
     input_population_size: usize,
     maximum_size: usize,
     setting: &VerificationSetting,
-    rng: &mut ThreadRng,
+    rng: &mut StdRng,
 ) {
     let mut total_coverage = 0_usize;
     inputs_population.clear();
@@ -405,7 +419,7 @@ fn initialize_trace_mutation(
     pos: &[usize],
     size: usize,
     setting: &VerificationSetting,
-    rng: &mut ThreadRng,
+    rng: &mut StdRng,
 ) -> Vec<FxHashMap<usize, SymbolicValue>> {
     (0..size)
         .map(|_| {
@@ -428,9 +442,9 @@ fn evolve_population<T: Clone>(
     mutation_rate: f64,
     crossover_rate: f64,
     setting: &VerificationSetting,
-    rng: &mut ThreadRng,
-    mutate_fn: impl Fn(&mut T, &VerificationSetting, &mut ThreadRng),
-    crossover_fn: impl Fn(&T, &T, &mut ThreadRng) -> T,
+    rng: &mut StdRng,
+    mutate_fn: impl Fn(&mut T, &VerificationSetting, &mut StdRng),
+    crossover_fn: impl Fn(&T, &T, &mut StdRng) -> T,
 ) -> Vec<T> {
     (0..population_size)
         .map(|_| {
@@ -452,7 +466,7 @@ fn evolve_population<T: Clone>(
 fn trace_mutate(
     individual: &mut FxHashMap<usize, SymbolicValue>,
     setting: &VerificationSetting,
-    rng: &mut ThreadRng,
+    rng: &mut StdRng,
 ) {
     if !individual.is_empty() {
         let var = individual.keys().choose(rng).unwrap();

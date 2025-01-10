@@ -9,7 +9,9 @@ use num_traits::One;
 
 use program_structure::ast::{Expression, ExpressionInfixOpcode, ExpressionPrefixOpcode};
 
-use tcct::executor::debug_ast::{DebugExpressionInfixOpcode, DebugExpressionPrefixOpcode};
+use tcct::executor::debug_ast::{
+    DebuggableExpressionInfixOpcode, DebuggableExpressionPrefixOpcode,
+};
 use tcct::executor::symbolic_execution::SymbolicExecutor;
 use tcct::executor::symbolic_setting::get_default_setting_for_symbolic_execution;
 use tcct::executor::symbolic_value::{OwnerName, SymbolicAccess, SymbolicName, SymbolicValue};
@@ -61,12 +63,12 @@ fn test_if_else() {
                         }]),
                         None,
                     ))),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::NotEq),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::NotEq),
                     Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
                 )),
                 Rc::new(SymbolicValue::BinaryOp(
                     Rc::new(SymbolicValue::ConstantInt(BigInt::one())),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Div),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Div),
                     Rc::new(SymbolicValue::Variable(SymbolicName::new(
                         sexe.symbolic_library.name2id["in"],
                         Rc::new(vec![OwnerName {
@@ -94,7 +96,7 @@ fn test_if_else() {
             Rc::new(SymbolicValue::BinaryOp(
                 Rc::new(SymbolicValue::BinaryOp(
                     Rc::new(SymbolicValue::UnaryOp(
-                        DebugExpressionPrefixOpcode(ExpressionPrefixOpcode::Sub),
+                        DebuggableExpressionPrefixOpcode(ExpressionPrefixOpcode::Sub),
                         Rc::new(SymbolicValue::Variable(SymbolicName::new(
                             sexe.symbolic_library.name2id["in"],
                             Rc::new(vec![OwnerName {
@@ -105,7 +107,7 @@ fn test_if_else() {
                             None,
                         ))),
                     )),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
                     Rc::new(SymbolicValue::Variable(SymbolicName::new(
                         sexe.symbolic_library.name2id["inv"],
                         Rc::new(vec![OwnerName {
@@ -116,7 +118,7 @@ fn test_if_else() {
                         None,
                     ))),
                 )),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                 Rc::new(SymbolicValue::ConstantInt(BigInt::one())),
             )),
         ),
@@ -131,7 +133,7 @@ fn test_if_else() {
                     }]),
                     None,
                 ))),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
                 Rc::new(SymbolicValue::Variable(SymbolicName::new(
                     sexe.symbolic_library.name2id["out"],
                     Rc::new(vec![OwnerName {
@@ -142,7 +144,7 @@ fn test_if_else() {
                     None,
                 ))),
             )),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
             Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
         ),
     ];
@@ -265,32 +267,32 @@ fn test_lessthan() {
     let cond_1 = SymbolicValue::BinaryOp(
         Rc::new(SymbolicValue::BinaryOp(
             Rc::new(SymbolicValue::ConstantInt(BigInt::one())),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
             lessthan_out.clone(),
         )),
-        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
+        DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
         Rc::new(SymbolicValue::BinaryOp(
             in_0.clone(),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Lesser),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Lesser),
             in_1.clone(),
         )),
     );
     let cond_0 = SymbolicValue::BinaryOp(
         Rc::new(SymbolicValue::BinaryOp(
             Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
             lessthan_out.clone(),
         )),
-        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
+        DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
         Rc::new(SymbolicValue::BinaryOp(
             in_0,
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::GreaterEq),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::GreaterEq),
             in_1,
         )),
     );
     let cond = SymbolicValue::BinaryOp(
         Rc::new(cond_1),
-        DebugExpressionInfixOpcode(ExpressionInfixOpcode::BoolOr),
+        DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::BoolOr),
         Rc::new(cond_0),
     );
 
@@ -426,7 +428,7 @@ fn test_1d_array_component() {
                         SymbolicValue::ConstantInt(BigInt::zero()),
                     )]),
                 ))),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Div),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Div),
                 Rc::new(SymbolicValue::Variable(SymbolicName::new(
                     sexe.symbolic_library.name2id["x"],
                     Rc::new(vec![
@@ -538,7 +540,7 @@ fn test_array_signal_initialization() {
                     }]),
                     None,
                 ))),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                 Rc::new(SymbolicValue::ConstantInt(BigInt::from(1))),
             )),
         ),
@@ -571,7 +573,7 @@ fn test_array_signal_initialization() {
                     }]),
                     None,
                 ))),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
                 Rc::new(SymbolicValue::ConstantInt(BigInt::from(2))),
             )),
         ),
@@ -595,7 +597,7 @@ fn test_array_signal_initialization() {
             Rc::new(SymbolicValue::BinaryOp(
                 Rc::new(SymbolicValue::BinaryOp(
                     Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                     Rc::new(SymbolicValue::Variable(SymbolicName::new(
                         sexe.symbolic_library.name2id["in"],
                         Rc::new(vec![
@@ -615,7 +617,7 @@ fn test_array_signal_initialization() {
                         )]),
                     ))),
                 )),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                 Rc::new(SymbolicValue::Variable(SymbolicName::new(
                     sexe.symbolic_library.name2id["in"],
                     Rc::new(vec![
@@ -710,16 +712,16 @@ fn test_2d_array_var() {
                             }]),
                             None,
                         ))),
-                        DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                        DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                         Rc::new(SymbolicValue::ConstantInt(BigInt::from(1))),
                     )),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                     Rc::new(SymbolicValue::ConstantInt(BigInt::from(2))),
                 )),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Div),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Div),
                 Rc::new(SymbolicValue::ConstantInt(BigInt::from(3))),
             )),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
             Rc::new(SymbolicValue::ConstantInt(BigInt::from(4))),
         )),
         false,
@@ -767,7 +769,7 @@ fn test_multidimensional_array_function() {
                 }]),
                 None,
             ))),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
             Rc::new(SymbolicValue::ConstantInt(BigInt::from(8))),
         )),
     )];
@@ -963,7 +965,7 @@ fn test_2d_array_component() {
                             SymbolicAccess::ArrayAccess(SymbolicValue::ConstantInt(BigInt::zero())),
                         ]),
                     ))),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                     Rc::new(SymbolicValue::Variable(SymbolicName::new(
                         sexe.symbolic_library.name2id["x"],
                         Rc::new(vec![
@@ -984,7 +986,7 @@ fn test_2d_array_component() {
                         ]),
                     ))),
                 )),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Div),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Div),
                 Rc::new(SymbolicValue::Variable(SymbolicName::new(
                     sexe.symbolic_library.name2id["x"],
                     Rc::new(vec![
@@ -1051,7 +1053,7 @@ fn test_recursive_function() {
                 }]),
                 None,
             ))),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
             Rc::new(SymbolicValue::ConstantInt(BigInt::from(15))),
         )),
     )];
@@ -1134,7 +1136,7 @@ fn test_bulk_assignment() {
             Rc::new(SymbolicValue::BinaryOp(
                 Rc::new(SymbolicValue::BinaryOp(
                     Rc::new(SymbolicValue::ConstantInt(BigInt::zero())),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                     Rc::new(SymbolicValue::Variable(SymbolicName::new(
                         sexe.symbolic_library.name2id["in"],
                         Rc::new(vec![
@@ -1155,7 +1157,7 @@ fn test_bulk_assignment() {
                         ]),
                     ))),
                 )),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
                 Rc::new(SymbolicValue::Variable(SymbolicName::new(
                     sexe.symbolic_library.name2id["in"],
                     Rc::new(vec![
@@ -1176,7 +1178,7 @@ fn test_bulk_assignment() {
                     ]),
                 ))),
             )),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
             Rc::new(SymbolicValue::Variable(SymbolicName::new(
                 sexe.symbolic_library.name2id["in"],
                 Rc::new(vec![
@@ -1261,7 +1263,7 @@ fn test_array_template_argument() {
                     SymbolicValue::ConstantInt(BigInt::zero()),
                 )]),
             ))),
-            DebugExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+            DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
             Rc::new(SymbolicValue::ConstantInt(BigInt::one())),
         )),
     );
@@ -1362,7 +1364,7 @@ fn test_anonymous_component() {
             Rc::new(SymbolicValue::BinaryOp(
                 Rc::new(SymbolicValue::BinaryOp(
                     Rc::new(SymbolicValue::ConstantInt(BigInt::from(2))),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
                     Rc::new(SymbolicValue::Variable(SymbolicName::new(
                         sexe.symbolic_library.name2id["a"],
                         Rc::new(vec![
@@ -1380,7 +1382,7 @@ fn test_anonymous_component() {
                         None,
                     ))),
                 )),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
                 Rc::new(SymbolicValue::Variable(SymbolicName::new(
                     sexe.symbolic_library.name2id["b"],
                     Rc::new(vec![
@@ -1504,7 +1506,7 @@ fn test_anonymous_component() {
             Rc::new(SymbolicValue::BinaryOp(
                 Rc::new(SymbolicValue::BinaryOp(
                     Rc::new(SymbolicValue::ConstantInt(BigInt::from(3))),
-                    DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
                     Rc::new(SymbolicValue::Variable(SymbolicName::new(
                         sexe.symbolic_library.name2id["a"],
                         Rc::new(vec![
@@ -1522,7 +1524,7 @@ fn test_anonymous_component() {
                         None,
                     ))),
                 )),
-                DebugExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
                 Rc::new(SymbolicValue::Variable(SymbolicName::new(
                     sexe.symbolic_library.name2id["b"],
                     Rc::new(vec![
@@ -1593,6 +1595,274 @@ fn test_branch_within_callee() {
     execute(&mut sexe, &program_archive);
 
     assert_eq!(sexe.cur_state.trace_constraints.len(), 5)
+}
+
+#[test]
+fn test_one_line_call() {
+    let path = "./tests/sample/test_one_line_call.circom".to_string();
+    let prime = BigInt::from_str(
+        "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+    )
+    .unwrap();
+
+    let (mut symbolic_library, program_archive) = prepare_symbolic_library(path, prime.clone());
+    let setting = get_default_setting_for_symbolic_execution(prime);
+
+    let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
+    execute(&mut sexe, &program_archive);
+
+    let main_A_11_152_a = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["a"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["A_11_152"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        None,
+    )));
+
+    let main_A_11_152_b = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["b"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["A_11_152"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        None,
+    )));
+
+    let main_A_11_152_c = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["c"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["A_11_152"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        None,
+    )));
+
+    let main_n = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["n"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        None,
+    )));
+
+    let main_in_0 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["in"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::zero()),
+        )]),
+    )));
+
+    let main_in_1 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["in"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::one()),
+        )]),
+    )));
+
+    let main_out = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["out"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        None,
+    )));
+
+    let ground_truth_constraints = vec![
+        SymbolicValue::AssignEq(
+            main_n.clone(),
+            Rc::new(SymbolicValue::ConstantInt(BigInt::from_str("2").unwrap())),
+        ),
+        SymbolicValue::AssignEq(main_A_11_152_a.clone(), main_in_0.clone()),
+        SymbolicValue::AssignEq(main_A_11_152_b.clone(), main_in_1.clone()),
+        SymbolicValue::AssignEq(
+            main_A_11_152_c.clone(),
+            Rc::new(SymbolicValue::BinaryOp(
+                main_A_11_152_a,
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                main_A_11_152_b,
+            )),
+        ),
+        SymbolicValue::AssignEq(main_out, main_A_11_152_c),
+    ];
+
+    for i in 0..ground_truth_constraints.len() {
+        assert_eq!(
+            ground_truth_constraints[i],
+            *sexe.cur_state.trace_constraints[i].clone()
+        );
+        assert_eq!(
+            ground_truth_constraints[i],
+            *sexe.cur_state.side_constraints[i].clone()
+        );
+    }
+}
+
+#[test]
+fn test_one_line_call_array() {
+    let path = "./tests/sample/test_one_line_call_array.circom".to_string();
+    let prime = BigInt::from_str(
+        "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+    )
+    .unwrap();
+
+    let (mut symbolic_library, program_archive) = prepare_symbolic_library(path, prime.clone());
+    let setting = get_default_setting_for_symbolic_execution(prime);
+
+    let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
+    execute(&mut sexe, &program_archive);
+
+    let main_callee_13_217_in_0 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["in"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["Callee_13_217"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::zero()),
+        )]),
+    )));
+
+    let main_callee_13_217_in_1 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["in"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["Callee_13_217"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::one()),
+        )]),
+    )));
+
+    let main_callee_13_217_out = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["out"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["Callee_13_217"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        None,
+    )));
+
+    let main_a = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["a"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        None,
+    )));
+
+    let main_b = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["b"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        None,
+    )));
+
+    let main_c = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["c"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        None,
+    )));
+
+    let ground_truth_constraints = vec![
+        SymbolicValue::AssignEq(main_callee_13_217_in_0.clone(), main_a),
+        SymbolicValue::AssignEq(main_callee_13_217_in_1.clone(), main_b),
+        SymbolicValue::AssignEq(
+            main_callee_13_217_out.clone(),
+            Rc::new(SymbolicValue::BinaryOp(
+                Rc::new(SymbolicValue::ConstantInt(BigInt::from_str("3").unwrap())),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
+                Rc::new(SymbolicValue::BinaryOp(
+                    main_callee_13_217_in_0,
+                    DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                    main_callee_13_217_in_1,
+                )),
+            )),
+        ),
+        SymbolicValue::AssignEq(main_c, main_callee_13_217_out),
+    ];
+
+    for i in 0..ground_truth_constraints.len() {
+        assert_eq!(
+            ground_truth_constraints[i],
+            *sexe.cur_state.trace_constraints[i].clone()
+        );
+        assert_eq!(
+            ground_truth_constraints[i],
+            *sexe.cur_state.side_constraints[i].clone()
+        );
+    }
 }
 
 #[test]

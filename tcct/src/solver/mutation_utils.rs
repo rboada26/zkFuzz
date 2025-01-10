@@ -3,7 +3,7 @@ use std::rc::Rc;
 use num_bigint_dig::BigInt;
 use num_bigint_dig::RandBigInt;
 use num_traits::{One, Signed, Zero};
-use rand::rngs::ThreadRng;
+use rand::rngs::StdRng;
 use rand::Rng;
 use rustc_hash::FxHashMap;
 
@@ -18,7 +18,7 @@ use crate::solver::utils::{
 pub fn roulette_selection<'a, T: Clone>(
     population: &'a [T],
     fitness_scores: &[BigInt],
-    rng: &mut ThreadRng,
+    rng: &mut StdRng,
 ) -> &'a T {
     let min_score = fitness_scores.iter().min().unwrap();
     let weights: Vec<_> = fitness_scores
@@ -44,7 +44,7 @@ pub fn roulette_selection<'a, T: Clone>(
 pub fn random_crossover<K, V>(
     parent1: &FxHashMap<K, V>,
     parent2: &FxHashMap<K, V>,
-    rng: &mut ThreadRng,
+    rng: &mut StdRng,
 ) -> FxHashMap<K, V>
 where
     K: Clone + std::hash::Hash + std::cmp::Eq,
@@ -111,7 +111,7 @@ pub fn evaluate_trace_fitness_by_error(
     for (i, inp) in inputs_assignment.iter().enumerate() {
         let mut assignment = inp.clone();
 
-        let is_success = emulate_symbolic_values(
+        let (is_success, failure_pos) = emulate_symbolic_values(
             &setting.prime,
             &mutated_trace_constraints,
             &mut assignment,
@@ -137,10 +137,22 @@ pub fn evaluate_trace_fitness_by_error(
                 if is_vulnerable(&flag) {
                     max_idx = i;
                     max_score = BigInt::zero();
-                    counter_example = Some(CounterExample {
-                        flag: flag,
-                        assignment: assignment.clone(),
-                    });
+                    counter_example = if let VerificationResult::UnderConstrained(
+                        UnderConstrainedType::NonDeterministic(sym_name, _, _),
+                    ) = &flag
+                    {
+                        Some(CounterExample {
+                            flag: flag.clone(),
+                            target_output: Some(sym_name.clone()),
+                            assignment: assignment.clone(),
+                        })
+                    } else {
+                        Some(CounterExample {
+                            flag: flag,
+                            target_output: None,
+                            assignment: assignment.clone(),
+                        })
+                    };
                     break;
                 } else {
                     score = -setting.prime.clone();
@@ -151,8 +163,12 @@ pub fn evaluate_trace_fitness_by_error(
                     max_score = BigInt::zero();
                     counter_example = Some(CounterExample {
                         flag: VerificationResult::UnderConstrained(
-                            UnderConstrainedType::Deterministic,
+                            UnderConstrainedType::UnexpectedTrace(
+                                mutated_trace_constraints[failure_pos]
+                                    .lookup_fmt(&sexe.symbolic_library.id2name),
+                            ),
                         ),
+                        target_output: None,
                         assignment: assignment.clone(),
                     });
                     break;
