@@ -7,6 +7,9 @@ mod stats;
 mod type_analysis_user;
 
 use std::env;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
+use std::path::Path;
 use std::str::FromStr;
 use std::time;
 
@@ -15,7 +18,9 @@ use env_logger;
 use input_user::Input;
 use log::{debug, warn};
 use num_bigint_dig::BigInt;
-use rustc_hash::FxHashMap;
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use program_structure::ast::Expression;
 use program_structure::program_archive::ProgramArchive;
@@ -56,6 +61,16 @@ fn display_tcct_logo() {
     );
 }
 
+fn read_file_to_lines(file_path: &str) -> io::Result<Vec<String>> {
+    let path = Path::new(file_path);
+    let file = File::open(path)?;
+    let reader = io::BufReader::new(file);
+
+    let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
+
+    Ok(lines)
+}
+
 fn main() {
     display_tcct_logo();
 
@@ -92,6 +107,17 @@ fn start() -> Result<(), ()> {
 
     env_logger::init();
 
+    println!("{}", "🧾 Loading Whitelists...".green());
+    let whitelist = if user_input.path_to_whitelist() == "none" {
+        FxHashSet::from_iter(["IsZero".to_string(), "Num2Bits".to_string()])
+    } else {
+        FxHashSet::from_iter(
+            read_file_to_lines(&user_input.path_to_mutation_setting())
+                .unwrap()
+                .into_iter(),
+        )
+    };
+
     let mut symbolic_library = SymbolicLibrary {
         template_library: FxHashMap::default(),
         name2id: FxHashMap::default(),
@@ -103,7 +129,12 @@ fn start() -> Result<(), ()> {
     println!("{}", "🧩 Parsing Templates...".green());
     for (k, v) in program_archive.templates.clone().into_iter() {
         let body = v.get_body().clone();
-        symbolic_library.register_template(k.clone(), &body.clone(), v.get_name_of_params());
+        symbolic_library.register_template(
+            k.clone(),
+            &body.clone(),
+            v.get_name_of_params(),
+            &whitelist,
+        );
 
         if user_input.flag_printout_ast {
             println!(
@@ -288,14 +319,45 @@ fn start() -> Result<(), ()> {
                             user_input.search_mode.to_string()
                         ),
                     };
-                    if counterexample.is_some() {
+                    if let Some(ce) = counterexample {
                         is_safe = false;
-                        println!(
-                            "{}",
-                            counterexample
-                                .unwrap()
-                                .lookup_fmt(&conc_executor.symbolic_library.id2name)
-                        );
+                        if user_input.flag_save_output {
+                            // Save the output as JSON
+                            let ce_meta = FxHashMap::from_iter([
+                                (
+                                    "0_target_path".to_string(),
+                                    user_input.input_file().to_string(),
+                                ),
+                                ("1_main_template".to_string(), id.to_string()),
+                                ("2_search_mode".to_string(), user_input.search_mode()),
+                                (
+                                    "3_execution_time".to_string(),
+                                    format!("{:?}", start_time.elapsed()),
+                                ),
+                            ]);
+                            let json_output = ce.to_json_with_meta(
+                                &conc_executor.symbolic_library.id2name,
+                                &ce_meta,
+                            );
+
+                            let mut file_path = user_input.input_file().to_string();
+                            file_path.push('_');
+                            let random_string: String = thread_rng()
+                                .sample_iter(&Alphanumeric)
+                                .take(10)
+                                .map(char::from)
+                                .collect();
+                            file_path.push_str(&random_string);
+                            file_path.push_str("_counterexample.json");
+                            println!("{} {}", "💾 Saving the output to:", file_path.cyan(),);
+
+                            let mut file = File::create(file_path).expect("Unable to create file");
+                            let json_string = serde_json::to_string_pretty(&json_output).unwrap();
+                            file.write_all(json_string.as_bytes())
+                                .expect("Unable to write data");
+                        }
+
+                        println!("{}", ce.lookup_fmt(&conc_executor.symbolic_library.id2name));
                     }
                 }
             }

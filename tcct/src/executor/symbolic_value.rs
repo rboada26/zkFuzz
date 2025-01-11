@@ -440,6 +440,7 @@ impl SymbolicLibrary {
         name: String,
         body: &Statement,
         template_parameter_names: &Vec<String>,
+        whitelist: &FxHashSet<String>,
     ) {
         let mut input_ids = FxHashSet::default();
         let mut output_ids = FxHashSet::default();
@@ -447,7 +448,7 @@ impl SymbolicLibrary {
         let mut id2dimensions = FxHashMap::default();
 
         let is_lessthan = &name == "LessThan";
-        let is_safe = &name == "Num2Bits";
+        let is_safe = whitelist.contains(&name);
 
         let i = if let Some(i) = self.name2id.get(&name) {
             *i
@@ -726,7 +727,13 @@ pub fn evaluate_binary_op(
     match (&normalized_lhs, &normalized_rhs) {
         (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => match &op.0 {
             ExpressionInfixOpcode::Add => SymbolicValue::ConstantInt((lv + rv) % prime),
-            ExpressionInfixOpcode::Sub => SymbolicValue::ConstantInt((lv - rv) % prime),
+            ExpressionInfixOpcode::Sub => {
+                let mut tmp = (lv - rv) % prime;
+                if tmp.is_negative() {
+                    tmp += prime;
+                }
+                SymbolicValue::ConstantInt(tmp)
+            }
             ExpressionInfixOpcode::Mul => SymbolicValue::ConstantInt((lv * rv) % prime),
             ExpressionInfixOpcode::Pow => SymbolicValue::ConstantInt(modpow(lv, rv, prime)),
             ExpressionInfixOpcode::Div => {

@@ -34,16 +34,18 @@ pub struct Input {
     pub no_rounds: usize,
     pub flag_verbose: bool,
         */
+    pub link_libraries : Vec<PathBuf>,
     pub flag_printout_ast: bool,
     pub flag_printout_stats: bool,
     pub flag_symbolic_template_params: bool,
+    pub flag_save_output: bool,
     pub show_stats_of_ast: bool,
     pub prime: String,
     pub debug_prime: String,
     pub heuristics_range: String,
     pub search_mode: String,
-    pub path_to_mutation_setting:String,
-    pub link_libraries : Vec<PathBuf>
+    pub path_to_mutation_setting: String,
+    pub path_to_whitelist: String,
 }
 
 /*
@@ -121,12 +123,14 @@ impl Input {
             flag_printout_ast: input_processing::get_ast(&matches),
             flag_printout_stats: input_processing::get_stats(&matches),
             flag_symbolic_template_params: input_processing::get_symbolic_template_params(&matches),
+            flag_save_output: input_processing::get_save_output(&matches),
             show_stats_of_ast: input_processing::get_show_stats_of_ast(&matches),
             prime: input_processing::get_prime(&matches)?,
             debug_prime: input_processing::get_debug_prime(&matches)?,
             heuristics_range: input_processing::get_heuristics_range(&matches)?,
             search_mode: input_processing::get_search_mode(&matches)?,
             path_to_mutation_setting: input_processing::get_path_to_mutation_setting(&matches)?,
+            path_to_whitelist: input_processing::get_path_to_whitelist(&matches)?,
             link_libraries
         })
     }
@@ -257,6 +261,9 @@ impl Input {
     pub fn path_to_mutation_setting(&self) -> String{
         self.path_to_mutation_setting.clone()
     }
+    pub fn path_to_whitelist(&self) -> String{
+        self.path_to_whitelist.clone()
+    }
 }
 mod input_processing {
     use ansi_term::Colour;
@@ -350,6 +357,10 @@ mod input_processing {
         matches.is_present("symbolic_template_params")
     }
 
+    pub fn get_save_output(matches: &ArgMatches) -> bool {
+        matches.is_present("save_output")
+    }
+
     pub fn get_show_stats_of_ast(matches: &ArgMatches) -> bool {
         matches.is_present("show_stats_of_ast")
     }
@@ -430,6 +441,13 @@ mod input_processing {
     pub fn get_path_to_mutation_setting(matches: &ArgMatches) -> Result<String, ()> {
         match matches.is_present("path_to_mutation_setting") {
             true => Ok(String::from(matches.value_of("path_to_mutation_setting").unwrap())),
+            false => Ok(String::from("none"))
+        }
+    }
+
+    pub fn get_path_to_whitelist(matches: &ArgMatches) -> Result<String, ()> {
+        match matches.is_present("path_to_whitelist") {
+            true => Ok(String::from(matches.value_of("path_to_whitelist").unwrap())),
             false => Ok(String::from("none"))
         }
     }
@@ -635,6 +653,13 @@ mod input_processing {
                     .display_order(1020)
                     .help("(TCCT) Treats the template parameters of the main template as symbolic values"),
             )
+            .arg(
+                Arg::with_name("save_output")
+                    .long("save_output")
+                    .takes_value(false)
+                    .display_order(1030)
+                    .help("(TCCT) Save the otuput when the counterexample is found"),
+            )
             .arg (
                 Arg::with_name("search_mode")
                     .long("search_mode")
@@ -650,6 +675,14 @@ mod input_processing {
                     .default_value("none")
                     .display_order(1045)
                     .help("(TCCT) Path to the setting file for Mutation Testing"),
+            )
+            .arg (
+                Arg::with_name("path_to_whitelist")
+                    .long("path_to_whitelist")
+                    .takes_value(true)
+                    .default_value("none")
+                    .display_order(1046)
+                    .help("(TCCT) Path to the white-lists file"),
             )
             .arg (
                 Arg::with_name("debug_prime")
