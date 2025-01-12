@@ -11,7 +11,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use program_structure::ast::Expression;
 use program_structure::ast::ExpressionInfixOpcode;
 use program_structure::ast::ExpressionPrefixOpcode;
-use serde::de::value;
 use serde_json::{json, Value};
 
 use crate::executor::debug_ast::{
@@ -101,7 +100,7 @@ impl CounterExample {
         meta: &FxHashMap<String, String>,
     ) -> Value {
         let mut base_json = json!({
-            "4_flag": self.flag.to_json(),
+            "5_flag": self.flag.to_json(),
         });
 
         for (key, value) in meta {
@@ -109,10 +108,10 @@ impl CounterExample {
         }
 
         if let Some(target) = &self.target_output {
-            base_json["5_target_output"] = json!(target.lookup_fmt(lookup));
+            base_json["6_target_output"] = json!(target.lookup_fmt(lookup));
         }
 
-        base_json["6_assignment"] = json!(self
+        base_json["7_assignment"] = json!(self
             .assignment
             .iter()
             .map(|(var_name, value)| (var_name.lookup_fmt(lookup), value.to_string()))
@@ -830,7 +829,7 @@ pub fn verify_assignment(
                 .contains(&k.id)
             {
                 let original_sym_value = &sexe.cur_state.symbol_binding_map[&k];
-                let original_int_value = match &(*original_sym_value.clone()) {
+                let original_int_value = match &**original_sym_value {
                     SymbolicValue::ConstantInt(num) => num.clone(),
                     SymbolicValue::ConstantBool(b) => {
                         if *b {
