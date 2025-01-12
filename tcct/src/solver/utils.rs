@@ -609,6 +609,7 @@ pub fn evaluate_symbolic_value(
                 keep_track_constraints: false,
                 substitute_output: false,
                 propagate_assignments: true,
+                constraint_assert_dissabled: false,
             };
             let mut subse = SymbolicExecutor::new(symbolic_library, &setting);
 
@@ -818,7 +819,11 @@ pub fn verify_assignment(
         sexe.concrete_execute(&setting.target_template_name, assignment);
 
         if sexe.cur_state.is_failed {
-            return VerificationResult::WellConstrained;
+            let vc = sexe.violated_condition.clone().unwrap();
+            return VerificationResult::UnderConstrained(UnderConstrainedType::UnexpectedTrace(
+                vc.0,
+                vc.1.lookup_fmt(&sexe.symbolic_library.id2name),
+            ));
         }
 
         let mut result = VerificationResult::WellConstrained;
