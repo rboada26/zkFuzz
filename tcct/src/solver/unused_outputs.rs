@@ -18,10 +18,10 @@ pub fn check_unused_outputs(
 ) -> Option<CounterExample> {
     let mut variables: Vec<SymbolicName> = Vec::new();
     variables.append(&mut extract_variables(
-        &sexe.cur_state.trace_constraints.clone(),
+        &sexe.cur_state.symbolic_trace.clone(),
     ));
     variables.append(&mut extract_variables(
-        &sexe.cur_state.trace_constraints.clone(),
+        &sexe.cur_state.symbolic_trace.clone(),
     ));
     let variables_set: HashSet<SymbolicName> = variables.iter().cloned().collect();
 
@@ -34,7 +34,7 @@ pub fn check_unused_outputs(
         let dims = sexe.evaluate_dimension(
             &sexe.symbolic_library.template_library
                 [&sexe.symbolic_library.name2id[&setting.target_template_name]]
-                .id2dimensions[&oup_name]
+                .id2dimension_expressions[&oup_name]
                 .clone(),
             usize::MAX,
         );

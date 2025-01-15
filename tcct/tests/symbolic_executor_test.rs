@@ -41,7 +41,7 @@ fn test_if_else() {
     assert!(sexe.symbolic_library.name2id.contains_key("out"));
     assert!(sexe.symbolic_library.name2id.contains_key("main"));
 
-    let ground_truth_trace_constraints_if_branch = vec![
+    let ground_truth_symbolic_trace_if_branch = vec![
         SymbolicValue::Assign(
             Rc::new(SymbolicValue::Variable(SymbolicName::new(
                 sexe.symbolic_library.name2id["inv"],
@@ -149,11 +149,11 @@ fn test_if_else() {
         ),
     ];
 
-    assert_eq!(sexe.cur_state.trace_constraints.len(), 3);
+    assert_eq!(sexe.cur_state.symbolic_trace.len(), 3);
     for i in 0..3 {
         assert_eq!(
-            ground_truth_trace_constraints_if_branch[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            ground_truth_symbolic_trace_if_branch[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
     }
 }
@@ -172,7 +172,7 @@ fn test_lessthan() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![
+    let ground_truth_symbolic_trace = vec![
         SymbolicValue::AssignEq(
             Rc::new(SymbolicValue::Variable(SymbolicName::new(
                 sexe.symbolic_library.name2id["in"],
@@ -298,15 +298,15 @@ fn test_lessthan() {
 
     // (BoolOr (BoolAnd (Eq 1 main.lt.out) (Lt main.lt.in[0] main.lt.in[1])) (BoolAnd (Eq 0 main.lt.out) (GEq main.lt.in[0] main.lt.in[1]))),
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
     }
 
-    let n = sexe.cur_state.trace_constraints.len();
-    assert_eq!(cond, *sexe.cur_state.trace_constraints[n - 2].clone());
+    let n = sexe.cur_state.symbolic_trace.len();
+    assert_eq!(cond, *sexe.cur_state.symbolic_trace[n - 2].clone());
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn test_1d_array_component() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![
+    let ground_truth_symbolic_trace = vec![
         SymbolicValue::AssignEq(
             Rc::new(SymbolicValue::Variable(SymbolicName::new(
                 sexe.symbolic_library.name2id["x"],
@@ -454,10 +454,10 @@ fn test_1d_array_component() {
         ),
     ];
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i + 1].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i + 1].clone()
         );
     }
 
@@ -510,7 +510,7 @@ fn test_array_signal_initialization() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![
+    let ground_truth_symbolic_trace = vec![
         SymbolicValue::AssignEq(
             Rc::new(SymbolicValue::Variable(SymbolicName::new(
                 sexe.symbolic_library.name2id["in"],
@@ -667,10 +667,10 @@ fn test_array_signal_initialization() {
         ),
     ];
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
     }
 }
@@ -689,7 +689,7 @@ fn test_2d_array_var() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![SymbolicValue::Assign(
+    let ground_truth_symbolic_trace = vec![SymbolicValue::Assign(
         Rc::new(SymbolicValue::Variable(SymbolicName::new(
             sexe.symbolic_library.name2id["out"],
             Rc::new(vec![OwnerName {
@@ -727,10 +727,10 @@ fn test_2d_array_var() {
         false,
     )];
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
     }
 }
@@ -749,7 +749,7 @@ fn test_multidimensional_array_function() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![SymbolicValue::AssignEq(
+    let ground_truth_symbolic_trace = vec![SymbolicValue::AssignEq(
         Rc::new(SymbolicValue::Variable(SymbolicName::new(
             sexe.symbolic_library.name2id["out"],
             Rc::new(vec![OwnerName {
@@ -774,10 +774,10 @@ fn test_multidimensional_array_function() {
         )),
     )];
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
     }
 }
@@ -796,7 +796,7 @@ fn test_2d_array_component() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![
+    let ground_truth_symbolic_trace = vec![
         SymbolicValue::AssignEq(
             Rc::new(SymbolicValue::Variable(SymbolicName::new(
                 sexe.symbolic_library.name2id["x"],
@@ -1011,10 +1011,10 @@ fn test_2d_array_component() {
         ),
     ];
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
     }
 }
@@ -1033,7 +1033,7 @@ fn test_recursive_function() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![SymbolicValue::AssignEq(
+    let ground_truth_symbolic_trace = vec![SymbolicValue::AssignEq(
         Rc::new(SymbolicValue::Variable(SymbolicName::new(
             sexe.symbolic_library.name2id["out"],
             Rc::new(vec![OwnerName {
@@ -1058,10 +1058,10 @@ fn test_recursive_function() {
         )),
     )];
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
     }
 }
@@ -1203,11 +1203,11 @@ fn test_bulk_assignment() {
 
     assert_eq!(
         ground_truth_trace_constraint_1,
-        *sexe.cur_state.trace_constraints[1].clone()
+        *sexe.cur_state.symbolic_trace[1].clone()
     );
     assert_eq!(
         ground_truth_trace_constraint_2,
-        *sexe.cur_state.trace_constraints[7].clone()
+        *sexe.cur_state.symbolic_trace[7].clone()
     );
 }
 
@@ -1268,7 +1268,7 @@ fn test_array_template_argument() {
         )),
     );
 
-    assert_eq!(thrid_cond, *sexe.cur_state.trace_constraints[2].clone());
+    assert_eq!(thrid_cond, *sexe.cur_state.symbolic_trace[2].clone());
 }
 
 #[test]
@@ -1285,7 +1285,7 @@ fn test_anonymous_component() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let ground_truth_trace_constraints = vec![
+    let ground_truth_symbolic_trace = vec![
         SymbolicValue::AssignEq(
             Rc::new(SymbolicValue::Variable(SymbolicName::new(
                 sexe.symbolic_library.name2id["a"],
@@ -1572,10 +1572,10 @@ fn test_anonymous_component() {
         ),
     ];
 
-    for i in 0..ground_truth_trace_constraints.len() {
+    for i in 0..ground_truth_symbolic_trace.len() {
         assert_eq!(
-            ground_truth_trace_constraints[i],
-            *sexe.cur_state.trace_constraints[i + 1].clone()
+            ground_truth_symbolic_trace[i],
+            *sexe.cur_state.symbolic_trace[i + 1].clone()
         );
     }
 }
@@ -1594,7 +1594,7 @@ fn test_branch_within_callee() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    assert_eq!(sexe.cur_state.trace_constraints.len(), 5)
+    assert_eq!(sexe.cur_state.symbolic_trace.len(), 5)
 }
 
 #[test]
@@ -1611,8 +1611,255 @@ fn test_array_dimension_calculation_within_callee() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    assert_eq!(sexe.cur_state.trace_constraints.len(), 4);
+    assert_eq!(sexe.cur_state.symbolic_trace.len(), 4);
     assert_eq!(sexe.cur_state.side_constraints.len(), 4)
+}
+
+#[test]
+fn test_array_processing_and_nested_output() {
+    let path = "./tests/sample//test_array_processing_and_nested_output.circom".to_string();
+    let prime = BigInt::from_str(
+        "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+    )
+    .unwrap();
+
+    let (mut symbolic_library, program_archive) = prepare_symbolic_library(path, prime.clone());
+    let setting = get_default_setting_for_symbolic_execution(prime, false);
+
+    let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
+    execute(&mut sexe, &program_archive);
+
+    let first_cond = Rc::new(SymbolicValue::AssignEq(
+        Rc::new(SymbolicValue::Variable(SymbolicName::new(
+            sexe.symbolic_library.name2id["a"],
+            Rc::new(vec![
+                OwnerName {
+                    id: sexe.symbolic_library.name2id["main"],
+                    access: None,
+                    counter: 0,
+                },
+                OwnerName {
+                    id: sexe.symbolic_library.name2id["Callee_17_271"],
+                    access: None,
+                    counter: 0,
+                },
+            ]),
+            Some(vec![SymbolicAccess::ArrayAccess(
+                SymbolicValue::ConstantInt(BigInt::zero()),
+            )]),
+        ))),
+        Rc::new(SymbolicValue::Variable(SymbolicName::new(
+            sexe.symbolic_library.name2id["x"],
+            Rc::new(vec![OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            }]),
+            Some(vec![SymbolicAccess::ArrayAccess(
+                SymbolicValue::ConstantInt(BigInt::zero()),
+            )]),
+        ))),
+    ));
+
+    assert_eq!(sexe.cur_state.symbolic_trace[0], first_cond);
+    assert_eq!(sexe.cur_state.side_constraints[0], first_cond);
+
+    assert_eq!(sexe.cur_state.symbolic_trace.len(), 12);
+    assert_eq!(sexe.cur_state.side_constraints.len(), 12)
+}
+
+#[test]
+fn test_nested_inline_calls_and_multidim_returns() {
+    let path = "./tests/sample//test_nested_inline_calls_and_multidim_returns.circom".to_string();
+    let prime = BigInt::from_str(
+        "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+    )
+    .unwrap();
+
+    let (mut symbolic_library, program_archive) = prepare_symbolic_library(path, prime.clone());
+    let setting = get_default_setting_for_symbolic_execution(prime, false);
+
+    let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
+    execute(&mut sexe, &program_archive);
+
+    assert_eq!(sexe.cur_state.symbolic_trace.len(), 22);
+    assert_eq!(sexe.cur_state.side_constraints.len(), 22)
+}
+
+#[test]
+fn test_inline_call_bulk_return_assignment() {
+    let path = "./tests/sample/test_inline_call_bulk_return_assignment.circom".to_string();
+    let prime = BigInt::from_str(
+        "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+    )
+    .unwrap();
+
+    let (mut symbolic_library, program_archive) = prepare_symbolic_library(path, prime.clone());
+    let setting = get_default_setting_for_symbolic_execution(prime, false);
+
+    let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
+    execute(&mut sexe, &program_archive);
+
+    let x_0 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["x"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::zero()),
+        )]),
+    )));
+
+    let x_1 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["x"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::one()),
+        )]),
+    )));
+
+    let x0_0 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["x0"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["Callee_17_283"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::zero()),
+        )]),
+    )));
+
+    let x0_1 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["x0"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["Callee_17_283"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::one()),
+        )]),
+    )));
+
+    let out0_0 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["out0"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["Callee_17_283"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::zero()),
+        )]),
+    )));
+
+    let out0_1 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["out0"],
+        Rc::new(vec![
+            OwnerName {
+                id: sexe.symbolic_library.name2id["main"],
+                access: None,
+                counter: 0,
+            },
+            OwnerName {
+                id: sexe.symbolic_library.name2id["Callee_17_283"],
+                access: None,
+                counter: 0,
+            },
+        ]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::one()),
+        )]),
+    )));
+
+    let out_0 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["out"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::zero()),
+        )]),
+    )));
+
+    let out_1 = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+        sexe.symbolic_library.name2id["out"],
+        Rc::new(vec![OwnerName {
+            id: sexe.symbolic_library.name2id["main"],
+            access: None,
+            counter: 0,
+        }]),
+        Some(vec![SymbolicAccess::ArrayAccess(
+            SymbolicValue::ConstantInt(BigInt::one()),
+        )]),
+    )));
+
+    let ground_truth_constraints = vec![
+        SymbolicValue::AssignEq(x0_0.clone(), x_0.clone()),
+        SymbolicValue::AssignEq(x0_1.clone(), x_1.clone()),
+        SymbolicValue::AssignEq(
+            out0_0.clone(),
+            Rc::new(SymbolicValue::BinaryOp(
+                x0_0.clone(),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Add),
+                x0_1.clone(),
+            )),
+        ),
+        SymbolicValue::AssignEq(
+            out0_1.clone(),
+            Rc::new(SymbolicValue::BinaryOp(
+                x0_0.clone(),
+                DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Sub),
+                x0_1.clone(),
+            )),
+        ),
+        SymbolicValue::AssignEq(out_0.clone(), out0_0.clone()),
+        SymbolicValue::AssignEq(out_1.clone(), out0_1.clone()),
+    ];
+
+    assert_eq!(sexe.cur_state.symbolic_trace.len(), 6);
+    assert_eq!(sexe.cur_state.side_constraints.len(), 6);
+
+    for i in 0..ground_truth_constraints.len() {
+        assert_eq!(
+            ground_truth_constraints[i],
+            *sexe.cur_state.symbolic_trace[i].clone()
+        );
+        assert_eq!(
+            ground_truth_constraints[i],
+            *sexe.cur_state.side_constraints[i].clone()
+        );
+    }
 }
 
 #[test]
@@ -1745,7 +1992,7 @@ fn test_one_line_call() {
     for i in 0..ground_truth_constraints.len() {
         assert_eq!(
             ground_truth_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
         assert_eq!(
             ground_truth_constraints[i],
@@ -1874,7 +2121,7 @@ fn test_one_line_call_array() {
     for i in 0..ground_truth_constraints.len() {
         assert_eq!(
             ground_truth_constraints[i],
-            *sexe.cur_state.trace_constraints[i].clone()
+            *sexe.cur_state.symbolic_trace[i].clone()
         );
         assert_eq!(
             ground_truth_constraints[i],

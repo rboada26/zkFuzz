@@ -1,12 +1,14 @@
+use std::clone;
 use std::cmp::max;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use std::thread::panicking;
 
 use colored::Colorize;
 use log::trace;
 use num_bigint_dig::BigInt;
 use num_traits::cast::ToPrimitive;
-use num_traits::FromPrimitive;
+use num_traits::{FromPrimitive, Zero};
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 
 use program_structure::ast::{
@@ -111,6 +113,7 @@ pub struct SymbolicExecutor<'a> {
     pub symbolic_store: SymbolicStore,
     pub cur_state: SymbolicState,
     pub violated_condition: Option<(usize, SymbolicValue)>,
+    pub id2dimensions: FxHashMap<usize, Vec<usize>>,
     coverage_tracker: CoverageTracker,
     enable_coverage_tracking: bool,
 }
@@ -141,6 +144,7 @@ impl<'a> SymbolicExecutor<'a> {
             },
             cur_state: SymbolicState::new(),
             violated_condition: None,
+            id2dimensions: FxHashMap::default(),
             coverage_tracker: CoverageTracker::new(),
             setting: setting,
             enable_coverage_tracking: false,
@@ -203,7 +207,7 @@ impl<'a> SymbolicExecutor<'a> {
             );
             self.cur_state.set_sym_val(sym_name, simplified_a);
             if self.setting.keep_track_constraints {
-                self.cur_state.push_trace_constraint(&cond);
+                self.cur_state.push_symbolic_trace(&cond);
                 self.cur_state.push_side_constraint(&cond);
             }
         }
@@ -252,8 +256,8 @@ impl<'a> SymbolicExecutor<'a> {
                 DebuggableStatement::Return { .. } => {
                     self.handle_return(statements, cur_bid);
                 }
-                DebuggableStatement::Declaration { .. } => {
-                    self.handle_declaration(statements, cur_bid);
+                DebuggableStatement::Declaration { meta, .. } => {
+                    self.handle_declaration(statements, cur_bid, meta.elem_id);
                 }
                 DebuggableStatement::Substitution { .. } => {
                     self.handle_substitution(statements, cur_bid);
@@ -536,20 +540,24 @@ impl<'a> SymbolicExecutor<'a> {
                     })
                     .collect(),
             ),
-            SymbolicValue::UniformArray(element, count) => SymbolicValue::UniformArray(
-                Rc::new(self.simplify_variables(
-                    element,
-                    elem_id,
-                    only_constatant_simplification,
-                    only_variable_simplification,
-                )),
-                Rc::new(self.simplify_variables(
-                    count,
-                    elem_id,
-                    only_constatant_simplification,
-                    only_variable_simplification,
-                )),
-            ),
+            SymbolicValue::UniformArray(element, count) => {
+                let uarray = SymbolicValue::UniformArray(
+                    Rc::new(self.simplify_variables(
+                        element,
+                        elem_id,
+                        only_constatant_simplification,
+                        only_variable_simplification,
+                    )),
+                    Rc::new(self.simplify_variables(
+                        count,
+                        elem_id,
+                        only_constatant_simplification,
+                        only_variable_simplification,
+                    )),
+                );
+                // self.convert_uniform_array_to_array(Rc::new(uarray), elem_id)
+                uarray
+            }
             SymbolicValue::Call(func_id, args) => SymbolicValue::Call(
                 *func_id,
                 args.iter()
@@ -722,8 +730,8 @@ impl<'a> SymbolicExecutor<'a> {
                     if !subse.cur_state.contains_symbolic_loop {
                         // NOTE: a function does not produce any constraint
                         self.cur_state
-                            .trace_constraints
-                            .append(&mut subse.cur_state.trace_constraints);
+                            .symbolic_trace
+                            .append(&mut subse.cur_state.symbolic_trace);
 
                         let return_sym_name =
                             SymbolicName::new(usize::MAX, subse.cur_state.owner_name.clone(), None);
@@ -845,15 +853,23 @@ impl<'a> SymbolicExecutor<'a> {
             self.trace_if_enabled(meta);
 
             let evaled_rhe = self.evaluate_expression(rhe, meta.elem_id);
-            let simplified_rhe = self.simplify_variables(&evaled_rhe, meta.elem_id, true, false);
+            let mut simplified_rhe =
+                self.simplify_variables(&evaled_rhe, meta.elem_id, true, false);
             let (left_base_name, left_var_name) =
                 self.construct_symbolic_name(*var, access, meta.elem_id);
-
             let mut is_array_assignment = false;
             let mut is_bulk_assignment = false;
             let mut left_var_names = Vec::new();
             let mut right_values = Vec::new();
             let mut symbolic_positions = Vec::new();
+
+            match (&evaled_rhe, &simplified_rhe) {
+                (SymbolicValue::Variable(right_var_name), SymbolicValue::UniformArray(..)) => {
+                    simplified_rhe =
+                        self.update_uniform_array(right_var_name, &simplified_rhe, meta.elem_id);
+                }
+                _ => {}
+            }
 
             match &simplified_rhe {
                 SymbolicValue::Array(_) => {
@@ -867,9 +883,8 @@ impl<'a> SymbolicExecutor<'a> {
                 }
                 _ => {
                     let dim_of_left_var = left_var_name.get_dim();
-                    let id_of_direct_owner = self.get_id_of_direct_owner(&left_base_name);
                     let full_dim_of_left_var =
-                        self.get_full_dimension_of_var(&left_var_name, id_of_direct_owner);
+                        self.get_full_dimension_of_var(&left_var_name, &left_base_name);
                     is_bulk_assignment = full_dim_of_left_var > dim_of_left_var;
                     if full_dim_of_left_var > dim_of_left_var {
                         let component_name = if access.is_empty() {
@@ -882,12 +897,10 @@ impl<'a> SymbolicExecutor<'a> {
                             &left_var_name,
                             dim_of_left_var,
                             full_dim_of_left_var,
-                            id_of_direct_owner,
                             &simplified_rhe,
                             &mut left_var_names,
                             &mut right_values,
                             &mut symbolic_positions,
-                            meta.elem_id,
                         )
                     } else {
                         left_var_names.push(left_var_name.clone());
@@ -963,7 +976,7 @@ impl<'a> SymbolicExecutor<'a> {
                             Rc::new(simplified_lhe_val),
                             Rc::new(simplified_rhe_val),
                         );
-                        self.cur_state.push_trace_constraint(&cont);
+                        self.cur_state.push_symbolic_trace(&cont);
                         self.cur_state.push_side_constraint(&cont);
                     }
                     DebuggableAssignOp(AssignOp::AssignSignal) => {
@@ -973,7 +986,7 @@ impl<'a> SymbolicExecutor<'a> {
                             self.symbolic_library.template_library[&self.cur_state.template_id]
                                 .is_safe,
                         );
-                        self.cur_state.push_trace_constraint(&cont);
+                        self.cur_state.push_symbolic_trace(&cont);
                     }
                     _ => {}
                 }
@@ -1032,7 +1045,12 @@ impl<'a> SymbolicExecutor<'a> {
         }
     }
 
-    fn handle_declaration(&mut self, statements: &Vec<DebuggableStatement>, cur_bid: usize) {
+    fn handle_declaration(
+        &mut self,
+        statements: &Vec<DebuggableStatement>,
+        cur_bid: usize,
+        elem_id: usize,
+    ) {
         if let DebuggableStatement::Declaration { id, xtype, .. } = &statements[cur_bid] {
             let var_name = SymbolicName::new(*id, self.cur_state.owner_name.clone(), None);
             self.symbolic_store
@@ -1040,6 +1058,28 @@ impl<'a> SymbolicExecutor<'a> {
                 .insert(*id, DebuggableVariableType(xtype.clone()));
             let value = SymbolicValue::Variable(var_name.clone());
             self.cur_state.set_sym_val(var_name, value);
+
+            let dims = if self
+                .symbolic_library
+                .template_library
+                .contains_key(&self.cur_state.template_id)
+            {
+                self.evaluate_dimension(
+                    &self.symbolic_library.template_library[&self.cur_state.template_id]
+                        .id2dimension_expressions[id]
+                        .clone(),
+                    elem_id,
+                )
+            } else {
+                self.evaluate_dimension(
+                    &self.symbolic_library.function_library[&self.cur_state.template_id]
+                        .id2dimension_expressions[id]
+                        .clone(),
+                    elem_id,
+                )
+            };
+            self.id2dimensions.insert(*id, dims);
+
             self.execute(statements, cur_bid + 1);
         }
     }
@@ -1065,7 +1105,7 @@ impl<'a> SymbolicExecutor<'a> {
 
             if self.setting.keep_track_constraints {
                 if !self.setting.constraint_assert_dissabled {
-                    self.cur_state.push_trace_constraint(&cond);
+                    self.cur_state.push_symbolic_trace(&cond);
                 }
                 self.cur_state.push_side_constraint(&cond);
             } else {
@@ -1094,7 +1134,7 @@ impl<'a> SymbolicExecutor<'a> {
             let expr = self.evaluate_expression(&arg, meta.elem_id);
             let condition = self.simplify_variables(&expr, meta.elem_id, true, true);
             if self.setting.keep_track_constraints {
-                self.cur_state.push_trace_constraint(&condition);
+                self.cur_state.push_symbolic_trace(&condition);
             }
             self.execute(statements, cur_bid + 1);
         }
@@ -1113,6 +1153,30 @@ impl<'a> SymbolicExecutor<'a> {
 
 // Utility methods for substitution
 impl<'a> SymbolicExecutor<'a> {
+    fn convert_uniform_array_to_array(
+        &mut self,
+        uniform_array: Rc<SymbolicValue>,
+        elem_id: usize,
+    ) -> SymbolicValue {
+        let (elem, counts) = decompose_uniform_array(uniform_array);
+        let mut concrete_counts = Vec::new();
+        let mut is_success = true;
+        for c in counts.iter() {
+            let s = self.simplify_variables(&c, elem_id, false, false);
+            if let SymbolicValue::ConstantInt(v) = s {
+                concrete_counts.push(v.to_usize().unwrap())
+            } else {
+                is_success = false;
+                break;
+            }
+        }
+        if is_success {
+            SymbolicValue::Array(create_nested_array(&concrete_counts, elem))
+        } else {
+            SymbolicValue::Array(Vec::new())
+        }
+    }
+
     /// Handles array substitution in symbolic execution.
     ///
     /// This method processes the assignment of array values, updating the symbolic state
@@ -1142,28 +1206,11 @@ impl<'a> SymbolicExecutor<'a> {
         {
             base_array = match &*self.cur_state.symbol_binding_map[left_var_name] {
                 SymbolicValue::Array(elems) => SymbolicValue::Array(elems.to_vec()),
-                SymbolicValue::UniformArray(_, _) => {
-                    let (elem, counts) = decompose_uniform_array(
-                        self.cur_state.symbol_binding_map[left_var_name].clone(),
-                    );
-                    let mut concrete_counts = Vec::new();
-                    let mut is_success = true;
-                    for c in counts.iter() {
-                        let s = self.simplify_variables(&c, elem_id, false, false);
-                        if let SymbolicValue::ConstantInt(v) = s {
-                            concrete_counts.push(v.to_usize().unwrap())
-                        } else {
-                            is_success = false;
-                            break;
-                        }
-                    }
-                    if is_success {
-                        SymbolicValue::Array(create_nested_array(&concrete_counts, elem))
-                    } else {
-                        SymbolicValue::Array(Vec::new())
-                    }
-                }
-                _ => SymbolicValue::Array(Vec::new()),
+                SymbolicValue::UniformArray(_, _) => self.convert_uniform_array_to_array(
+                    self.cur_state.symbol_binding_map[left_var_name].clone(),
+                    elem_id,
+                ),
+                _ => arr.clone(), //SymbolicValue::Array(Vec::new()),
             };
         }
 
@@ -1240,7 +1287,7 @@ impl<'a> SymbolicExecutor<'a> {
                 Rc::new(right_call.clone()),
                 is_mutable,
             );
-            self.cur_state.push_trace_constraint(&cont);
+            self.cur_state.push_symbolic_trace(&cont);
         }
     }
 
@@ -1286,12 +1333,12 @@ impl<'a> SymbolicExecutor<'a> {
         se_for_initialization.execute(&template.body.clone(), 0);
 
         let mut symbol_optional_binding_map = FxHashMap::default();
-        let mut inputs_dimension_map = FxHashMap::default();
+        let mut id2dimensions = FxHashMap::default();
 
-        se_for_initialization.initialize_template_inputs(
+        se_for_initialization.pre_determine_dimensions(
             &template,
             &mut symbol_optional_binding_map,
-            &mut inputs_dimension_map,
+            &mut id2dimensions,
             elem_id,
         );
 
@@ -1301,7 +1348,7 @@ impl<'a> SymbolicExecutor<'a> {
             template_name: *callee_name,
             args: args.clone(),
             symbol_optional_binding_map: symbol_optional_binding_map,
-            inputs_dimension_map: inputs_dimension_map,
+            id2dimensions: id2dimensions,
             is_done: false,
         };
         self.symbolic_store
@@ -1309,16 +1356,18 @@ impl<'a> SymbolicExecutor<'a> {
             .insert(var_name.clone(), component);
     }
 
-    fn initialize_template_inputs(
+    fn pre_determine_dimensions(
         &mut self,
         template: &SymbolicTemplate,
         inputs_of_component: &mut FxHashMap<SymbolicName, Option<SymbolicValue>>,
         dimensions_of_inputs: &mut FxHashMap<usize, Vec<usize>>,
         elem_id: usize,
     ) {
-        for id in &template.input_ids {
-            let dims = self.evaluate_dimension(&template.id2dimensions[id], elem_id);
-            register_array_elements(*id, &dims, None, inputs_of_component);
+        for (id, _) in template.id2dimension_expressions.iter() {
+            let dims = self.evaluate_dimension(&template.id2dimension_expressions[id], elem_id);
+            if template.input_ids.contains(id) {
+                register_array_elements(*id, &dims, None, inputs_of_component);
+            }
             dimensions_of_inputs.insert(*id, dims);
         }
     }
@@ -1374,35 +1423,33 @@ impl<'a> SymbolicExecutor<'a> {
         left_var_name: &SymbolicName,
         dim_of_left_var: usize,
         full_dim_of_left_var: usize,
-        id_of_direct_owner: usize,
         rhe: &SymbolicValue,
         left_var_names: &mut Vec<SymbolicName>,
         right_values: &mut Vec<SymbolicValue>,
         symbolic_positions: &mut Vec<Vec<SymbolicAccess>>,
-        elem_id: usize,
     ) {
         if let SymbolicValue::Variable(ref right_var_name) = rhe {
-            let omitted_dims = if let Some(cn) = component_name {
-                self.recover_omitted_dims_within_callee(
-                    &cn,
+            let left_omitted_dims = if let Some(cn) = component_name {
+                self.recover_omitted_dims(
+                    Some(&cn),
                     &left_var_name,
                     dim_of_left_var,
                     full_dim_of_left_var,
                 )
             } else {
                 self.recover_omitted_dims(
+                    None,
                     &left_var_name,
                     dim_of_left_var,
                     full_dim_of_left_var,
-                    id_of_direct_owner,
-                    elem_id,
                 )
             };
-            let positions = generate_cartesian_product_indices(&omitted_dims);
+
+            let positions = generate_cartesian_product_indices(&left_omitted_dims);
             for p in positions {
                 let mut left_var_name_p = left_var_name.clone();
                 let mut right_var_name_p = right_var_name.clone();
-                let mut symbolic_p = p
+                let symbolic_p = p
                     .iter()
                     .map(|arg0: &usize| {
                         SymbolicAccess::ArrayAccess(SymbolicValue::ConstantInt(
@@ -1412,13 +1459,13 @@ impl<'a> SymbolicExecutor<'a> {
                     .collect::<Vec<_>>();
                 symbolic_positions.push(symbolic_p.clone());
                 if let Some(local_access) = left_var_name_p.access.as_mut() {
-                    local_access.append(&mut symbolic_p);
+                    local_access.append(&mut symbolic_p.clone());
                 } else {
                     left_var_name_p.access = Some(symbolic_p.clone());
                 }
                 left_var_name_p.update_hash();
                 if let Some(local_access) = right_var_name_p.access.as_mut() {
-                    local_access.append(&mut symbolic_p);
+                    local_access.append(&mut symbolic_p.clone());
                 } else {
                     right_var_name_p.access = Some(symbolic_p);
                 }
@@ -1459,7 +1506,7 @@ impl<'a> SymbolicExecutor<'a> {
                         Rc::new(SymbolicValue::Variable(var_name.clone())),
                         Rc::new(value.clone()),
                     );
-                    self.cur_state.push_trace_constraint(&cont);
+                    self.cur_state.push_symbolic_trace(&cont);
                     self.cur_state.push_side_constraint(&cont);
                 }
                 DebuggableAssignOp(AssignOp::AssignSignal) => {
@@ -1468,7 +1515,7 @@ impl<'a> SymbolicExecutor<'a> {
                         Rc::new(value.clone()),
                         self.symbolic_library.template_library[&self.cur_state.template_id].is_safe,
                     );
-                    self.cur_state.push_trace_constraint(&cont);
+                    self.cur_state.push_symbolic_trace(&cont);
                 }
                 _ => {}
             }
@@ -1636,7 +1683,7 @@ impl<'a> SymbolicExecutor<'a> {
                 /*
                 let tp_cond =
                     SymbolicValue::AssignEq(Rc::new(SymbolicValue::Variable(tp_name)), tp_val);
-                self.cur_state.push_trace_constraint(&tp_cond);
+                self.cur_state.push_symbolic_trace(&tp_cond);
                 */
             }
 
@@ -1663,8 +1710,8 @@ impl<'a> SymbolicExecutor<'a> {
             subse.execute(&templ.body.clone(), 0);
 
             self.cur_state
-                .trace_constraints
-                .append(&mut subse.cur_state.trace_constraints);
+                .symbolic_trace
+                .append(&mut subse.cur_state.symbolic_trace);
             self.cur_state
                 .side_constraints
                 .append(&mut subse.cur_state.side_constraints);
@@ -1679,7 +1726,7 @@ impl<'a> SymbolicExecutor<'a> {
                     &subse.symbolic_library.name2id,
                     subse.cur_state.owner_name.clone(),
                 );
-                self.cur_state.push_trace_constraint(&cond);
+                self.cur_state.push_symbolic_trace(&cond);
             }
 
             if !self.setting.off_trace {
@@ -1824,93 +1871,127 @@ impl<'a> SymbolicExecutor<'a> {
         }
     }
 
-    fn get_id_of_direct_owner(&self, base_name: &SymbolicName) -> usize {
-        if let Some(c) = self.symbolic_store.components_store.get(base_name) {
-            c.template_name
-        } else {
-            self.cur_state.template_id
-        }
+    fn get_sym_name_of_direct_owner(&self, base_name: &SymbolicName) -> SymbolicName {
+        let mut owners = (*base_name.owner).clone();
+        let mut sym_name_of_owner = base_name.clone();
+        sym_name_of_owner.id = owners.last().unwrap().id;
+        sym_name_of_owner.access = owners.last().unwrap().access.clone();
+        owners.pop();
+        sym_name_of_owner.owner = Rc::new(owners);
+        sym_name_of_owner
     }
 
     fn get_full_dimension_of_var(
         &self,
         var_name: &SymbolicName,
-        id_of_direct_owner: usize,
+        sym_name_of_direct_owner: &SymbolicName,
     ) -> usize {
-        if let Some(template) = self
-            .symbolic_library
-            .template_library
-            .get(&id_of_direct_owner)
+        if self
+            .symbolic_store
+            .components_store
+            .contains_key(sym_name_of_direct_owner)
         {
-            return template
-                .id2dimensions
-                .get(&var_name.id)
-                .map_or(0, |dimensions| dimensions.len());
-        } else if let Some(function) = self
-            .symbolic_library
-            .function_library
-            .get(&id_of_direct_owner)
-        {
-            return function
-                .id2dimensions
-                .get(&var_name.id)
-                .map_or(0, |dimensions| dimensions.len());
-        } else if id_of_direct_owner == std::usize::MAX {
-            return 0;
+            self.symbolic_store.components_store[sym_name_of_direct_owner].id2dimensions
+                [&var_name.id]
+                .len()
+        } else {
+            self.id2dimensions[&sym_name_of_direct_owner.id].len()
         }
-
-        panic!(
-            "Cannot find the owner template/function: {}",
-            self.symbolic_library.id2name[&id_of_direct_owner]
-        );
     }
 
     fn recover_omitted_dims(
         &mut self,
+        component_name: Option<&SymbolicName>,
         var_name: &SymbolicName,
         cur_dim: usize,
         full_dim: usize,
-        id_of_direct_owner: usize,
-        elem_id: usize,
     ) -> Vec<usize> {
+        let dimensions = if component_name.is_none() {
+            &self.id2dimensions[&var_name.id]
+        } else if self
+            .symbolic_store
+            .components_store
+            .contains_key(component_name.unwrap())
+        {
+            &self.symbolic_store.components_store[component_name.unwrap()].id2dimensions
+                [&var_name.id]
+        } else {
+            &self.id2dimensions[&var_name.id]
+        };
         let mut omitted_dims = Vec::new();
         for i in cur_dim..full_dim {
-            let dim_clone = if self
-                .symbolic_library
-                .template_library
-                .contains_key(&id_of_direct_owner)
-            {
-                self.symbolic_library.template_library[&id_of_direct_owner].id2dimensions
-                    [&var_name.id][i]
-                    .clone()
-            } else {
-                self.symbolic_library.function_library[&id_of_direct_owner].id2dimensions
-                    [&var_name.id][i]
-                    .clone()
-            };
-            let evaled_dim = self.evaluate_expression(&dim_clone, elem_id);
-            let simplified_dim = self.simplify_variables(&evaled_dim, elem_id, false, false);
-            if let SymbolicValue::ConstantInt(ref num) = simplified_dim {
-                omitted_dims.push(num.to_usize().unwrap());
-            }
+            omitted_dims.push(dimensions[i]);
         }
-        return omitted_dims;
+        omitted_dims
     }
 
-    fn recover_omitted_dims_within_callee(
+    fn update_uniform_array(
         &mut self,
-        component_name: &SymbolicName,
         var_name: &SymbolicName,
-        cur_dim: usize,
-        full_dim: usize,
-    ) -> Vec<usize> {
-        let mut omitted_dims = Vec::new();
-        for i in cur_dim..full_dim {
-            omitted_dims.push(
-                self.symbolic_store.components_store[component_name].inputs_dimension_map
-                    [&var_name.id][i],
-            );
+        uarray: &SymbolicValue,
+        elem_id: usize,
+    ) -> SymbolicValue {
+        let (_, dims) = decompose_uniform_array(Rc::new(uarray.clone()));
+        let mut concrete_dims = Vec::new();
+        for c in dims.iter() {
+            let s = self.simplify_variables(&c, elem_id, false, false);
+            if let SymbolicValue::ConstantInt(v) = s {
+                concrete_dims.push(v.to_usize().unwrap())
+            } else {
+                panic!(
+                    "Cannot determine the dimensions of {}",
+                    uarray.lookup_fmt(&self.symbolic_library.id2name)
+                );
+            }
         }
-        return omitted_dims;
+
+        let positions = generate_cartesian_product_indices(&concrete_dims);
+
+        let mut sym_array = self.convert_uniform_array_to_array(Rc::new(uarray.clone()), elem_id);
+
+        let is_signal = if let Some(template) = self
+            .symbolic_library
+            .template_library
+            .get(&self.cur_state.template_id)
+        {
+            if let Some(VariableType::Signal(_, _)) = template.id2type.get(&var_name.id) {
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let mut symbolic_positions = Vec::new();
+        for p in positions {
+            let mut var_name_p = var_name.clone();
+            let symbolic_p = p
+                .iter()
+                .map(|arg0: &usize| {
+                    SymbolicAccess::ArrayAccess(SymbolicValue::ConstantInt(
+                        BigInt::from_usize(*arg0).unwrap(),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            symbolic_positions.push(symbolic_p.clone());
+            if let Some(local_access) = var_name_p.access.as_mut() {
+                local_access.append(&mut symbolic_p.clone());
+            } else {
+                var_name_p.access = Some(symbolic_p.clone());
+            }
+            var_name_p.update_hash();
+
+            let sval = if !is_signal && self.cur_state.symbol_binding_map.contains_key(&var_name_p)
+            {
+                self.cur_state.symbol_binding_map[&var_name_p].clone()
+            } else {
+                Rc::new(SymbolicValue::Variable(var_name_p))
+            };
+
+            sym_array = (*update_nested_array(&p, Rc::new(sym_array), sval)).clone();
+        }
+
+        sym_array
     }
 }
