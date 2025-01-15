@@ -1,14 +1,12 @@
-use std::clone;
 use std::cmp::max;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-use std::thread::panicking;
 
 use colored::Colorize;
 use log::trace;
 use num_bigint_dig::BigInt;
 use num_traits::cast::ToPrimitive;
-use num_traits::{FromPrimitive, Zero};
+use num_traits::FromPrimitive;
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 
 use program_structure::ast::{
@@ -604,8 +602,8 @@ impl<'a> SymbolicExecutor<'a> {
 
                     let mut component_name = None;
                     let mut dims = Vec::new();
-                    for acc in access {
-                        let evaled_access = self.evaluate_access(&acc.clone(), elem_id);
+                    for acc in access.iter() {
+                        let evaled_access = self.evaluate_access(acc, elem_id);
                         match evaled_access {
                             SymbolicAccess::ComponentAccess(tmp_name) => {
                                 component_name = Some(tmp_name.clone());
@@ -691,7 +689,7 @@ impl<'a> SymbolicExecutor<'a> {
                     subse_setting.only_initialization_blocks = false;
                     let mut subse = SymbolicExecutor::new(symbolic_library, &subse_setting);
 
-                    let mut updated_owner_list = (*self.cur_state.owner_name.clone()).clone();
+                    let mut updated_owner_list = (*self.cur_state.owner_name).clone();
                     updated_owner_list.push(OwnerName {
                         id: *id,
                         counter: subse.symbolic_library.function_counter[id],
@@ -736,7 +734,7 @@ impl<'a> SymbolicExecutor<'a> {
                         let return_sym_name =
                             SymbolicName::new(usize::MAX, subse.cur_state.owner_name.clone(), None);
                         let return_value =
-                            (*subse.cur_state.symbol_binding_map[&return_sym_name].clone()).clone();
+                            (*subse.cur_state.symbol_binding_map[&return_sym_name]).clone();
                         match return_value {
                             SymbolicValue::ConstantBool(_) | SymbolicValue::ConstantInt(_) => {
                                 return_value
@@ -745,12 +743,12 @@ impl<'a> SymbolicExecutor<'a> {
                                 if is_concrete_array(&return_value) {
                                     return_value
                                 } else {
-                                    SymbolicValue::Call(id.clone(), simplified_args)
+                                    SymbolicValue::Call(*id, simplified_args)
                                 }
                             }
                         }
                     } else {
-                        SymbolicValue::Call(id.clone(), simplified_args)
+                        SymbolicValue::Call(*id, simplified_args)
                     }
                 } else {
                     panic!("Unknown Callee: {}", self.symbolic_library.id2name[id]);
@@ -1119,7 +1117,7 @@ impl<'a> SymbolicExecutor<'a> {
                             DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Eq),
                             Rc::new(rhe_val),
                         );
-                        self.violated_condition = Some((meta.elem_id, original_cond.clone()));
+                        self.violated_condition = Some((meta.elem_id, original_cond));
                     }
                 }
             }
@@ -1232,7 +1230,7 @@ impl<'a> SymbolicExecutor<'a> {
             if let SymbolicValue::Array(ref arr) = base_array {
                 if !arr.is_empty() {
                     base_array =
-                        (*update_nested_array(&pos, Rc::new(base_array), Rc::new(elem.clone())))
+                        (*update_nested_array(&pos, &Rc::new(base_array), &Rc::new(elem.clone())))
                             .clone();
                 }
             }
@@ -1330,7 +1328,7 @@ impl<'a> SymbolicExecutor<'a> {
                 .set_rc_sym_val(tp_name, args[i].clone());
         }
 
-        se_for_initialization.execute(&template.body.clone(), 0);
+        se_for_initialization.execute(&template.body, 0);
 
         let mut symbol_optional_binding_map = FxHashMap::default();
         let mut id2dimensions = FxHashMap::default();
@@ -1650,7 +1648,7 @@ impl<'a> SymbolicExecutor<'a> {
     ) {
         if !self.symbolic_store.components_store[base_name].is_done {
             let mut subse = SymbolicExecutor::new(&mut self.symbolic_library, self.setting);
-            let mut updated_owner_list = (*self.cur_state.owner_name.clone()).clone();
+            let mut updated_owner_list = (*self.cur_state.owner_name).clone();
             updated_owner_list.push(OwnerName {
                 id: var,
                 counter: 0,
@@ -1800,7 +1798,7 @@ impl<'a> SymbolicExecutor<'a> {
         let mut post_dims = Vec::new();
         let mut found_component = false;
         for acc in access {
-            let evaled_access = self.evaluate_access(&acc.clone(), elem_id);
+            let evaled_access = self.evaluate_access(&acc, elem_id);
             match evaled_access {
                 SymbolicAccess::ComponentAccess(tmp_name) => {
                     found_component = true;
@@ -1838,7 +1836,7 @@ impl<'a> SymbolicExecutor<'a> {
                 ),
             )
         } else {
-            let mut owner_name = (*self.cur_state.owner_name.clone()).clone();
+            let mut owner_name = (*self.cur_state.owner_name).clone();
             owner_name.push(OwnerName {
                 id: base_id,
                 counter: 0,
@@ -1869,16 +1867,6 @@ impl<'a> SymbolicExecutor<'a> {
                 ),
             )
         }
-    }
-
-    fn get_sym_name_of_direct_owner(&self, base_name: &SymbolicName) -> SymbolicName {
-        let mut owners = (*base_name.owner).clone();
-        let mut sym_name_of_owner = base_name.clone();
-        sym_name_of_owner.id = owners.last().unwrap().id;
-        sym_name_of_owner.access = owners.last().unwrap().access.clone();
-        owners.pop();
-        sym_name_of_owner.owner = Rc::new(owners);
-        sym_name_of_owner
     }
 
     fn get_full_dimension_of_var(
@@ -1989,7 +1977,7 @@ impl<'a> SymbolicExecutor<'a> {
                 Rc::new(SymbolicValue::Variable(var_name_p))
             };
 
-            sym_array = (*update_nested_array(&p, Rc::new(sym_array), sval)).clone();
+            sym_array = (*update_nested_array(&p, &Rc::new(sym_array), &sval)).clone();
         }
 
         sym_array

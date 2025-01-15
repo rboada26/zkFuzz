@@ -396,8 +396,8 @@ fn gather_variables_for_template(
         ..
     } = dbody
     {
-        id2type.insert(id.clone(), xtype.clone());
-        id2dimensions.insert(id.clone(), dimensions.clone());
+        id2type.insert(*id, xtype.clone());
+        id2dimensions.insert(*id, dimensions.clone());
         if let VariableType::Signal(typ, _taglist) = &xtype {
             match typ {
                 SignalType::Input => {
@@ -417,7 +417,7 @@ fn gather_variables_for_function(
     id2dimensions: &mut FxHashMap<usize, Vec<DebuggableExpression>>,
 ) {
     if let DebuggableStatement::Declaration { id, dimensions, .. } = dbody {
-        id2dimensions.insert(id.clone(), dimensions.clone());
+        id2dimensions.insert(*id, dimensions.clone());
     }
 }
 
@@ -454,7 +454,7 @@ impl SymbolicLibrary {
         let i = if let Some(i) = self.name2id.get(&name) {
             *i
         } else {
-            self.name2id.insert(name.clone(), self.name2id.len());
+            self.name2id.insert((*name).to_string(), self.name2id.len());
             self.id2name.insert(self.name2id[&name], name.clone());
             self.name2id.len() - 1
         };
@@ -543,14 +543,14 @@ pub fn access_multidimensional_array(
     values: &Vec<SymbolicValueRef>,
     dims: &[SymbolicAccess],
 ) -> SymbolicValue {
-    let mut current_values = values.clone();
+    let mut current_values = values;
     for dim in dims {
         if let SymbolicAccess::ArrayAccess(SymbolicValue::ConstantInt(a)) = dim {
             let index = a.to_usize().unwrap();
             if index < current_values.len() {
                 match &*current_values[index] {
                     SymbolicValue::Array(inner_values) => {
-                        current_values = inner_values.clone();
+                        current_values = &inner_values;
                     }
                     value => return value.clone(),
                 };
@@ -559,7 +559,7 @@ pub fn access_multidimensional_array(
             }
         } else {
             //panic!("dims should be a list of SymbolicAccess::ArrayAccess");
-            return SymbolicValue::Array(current_values);
+            return SymbolicValue::Array(current_values.to_vec());
         }
     }
     panic!("Incomplete dimensions");
@@ -937,18 +937,18 @@ pub fn create_nested_array(
 
 pub fn update_nested_array(
     dims: &[usize],
-    array: SymbolicValueRef,
-    value: SymbolicValueRef,
+    array: &SymbolicValueRef,
+    value: &SymbolicValueRef,
 ) -> SymbolicValueRef {
-    if let SymbolicValue::Array(arr) = (*array).clone() {
+    if let SymbolicValue::Array(arr) = (*array).as_ref() {
         let mut new_arr = arr.clone();
         if dims.len() == 1 {
-            new_arr[dims[0]] = value;
+            new_arr[dims[0]] = value.clone();
         } else {
-            new_arr[dims[0]] = update_nested_array(&dims[1..], arr[dims[0]].clone(), value);
+            new_arr[dims[0]] = update_nested_array(&dims[1..], &arr[dims[0]], value);
         }
         Rc::new(SymbolicValue::Array(new_arr))
     } else {
-        array
+        array.clone()
     }
 }
