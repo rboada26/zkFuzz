@@ -208,7 +208,7 @@ pub fn is_vulnerable(vr: &VerificationResult) -> bool {
 }
 
 /// Configures the settings for the verification process.
-pub struct VerificationSetting {
+pub struct BaseVerificationConfig {
     pub target_template_name: String,
     pub prime: BigInt,
     pub range: BigInt,
@@ -383,15 +383,44 @@ pub fn count_satisfied_constraints(
         .count()
 }
 
-pub fn emulate_symbolic_values(
+/// Simulates the execution of a symbolic trace, evaluating the values of symbolic variables.
+///
+/// This function processes a symbolic trace step by step, updating the provided `assignment` with the values
+/// of symbolic variables as determined by the trace's operations. It checks whether each operation is valid
+/// based on the current assignment and symbolic library, and if any error occurs (e.g., unsatisfied condition),
+/// it marks the simulation as unsuccessful and returns the index of the failure.
+///
+/// # Parameters
+/// - `prime`: A reference to the prime modulus used for modular arithmetic.
+/// - `trace`: A slice of references to symbolic values representing the symbolic trace to be simulated.
+/// - `assignment`: A mutable hash map of symbolic variable names to their corresponding `BigInt` values.
+/// - `symbolic_library`: A mutable reference to a symbolic library containing the definitions of symbolic values.
+///
+/// # Returns
+/// A tuple:
+/// - `bool`: Indicates whether the symbolic trace simulation was successful (`true`) or failed (`false`).
+/// - `usize`: The index of the trace operation that caused the failure, if any; otherwise, `0`.
+///
+/// # Behavior
+/// 1. The function iterates over each symbolic value in the trace:
+///    - For constants, it checks whether they match the expected value.
+///    - For assignments, it evaluates the right-hand side expression and updates the `assignment` map.
+///    - For binary and unary operations, it checks the result of the operation and compares it to the expected value.
+/// 2. If an operation fails (e.g., an unsatisfied condition), the simulation is marked as unsuccessful,
+///    and the index of the failing operation is returned.
+///
+/// # Errors
+/// - If the left-hand side of an assignment is not a variable, the function will panic.
+/// - If there is an unassigned variable in the expression being evaluated, the function will panic.
+pub fn emulate_symbolic_trace(
     prime: &BigInt,
-    traces: &[SymbolicValueRef],
+    trace: &[SymbolicValueRef],
     assignment: &mut FxHashMap<SymbolicName, BigInt>,
     symbolic_library: &mut SymbolicLibrary,
 ) -> (bool, usize) {
     let mut success = true;
     let mut failure_pos = 0;
-    for (i, inst) in traces.iter().enumerate() {
+    for (i, inst) in trace.iter().enumerate() {
         match inst.as_ref() {
             SymbolicValue::ConstantBool(b) => {
                 if !b {
@@ -491,15 +520,45 @@ pub fn emulate_symbolic_values(
     (success, failure_pos)
 }
 
-/// Evaluates a symbolic value given a variable assignment.
+/// Evaluates a symbolic value within the given context of a symbolic library and variable assignments.
+///
+/// This function recursively evaluates a symbolic value, resolving constants, variables, arrays,
+/// and expressions to their concrete values where possible. The evaluation respects the modular
+/// arithmetic defined by the given prime modulus and handles symbolic expressions such as
+/// binary and unary operations, conditionals, and function calls.
 ///
 /// # Parameters
-/// - `prime`: The prime modulus for computations.
-/// - `value`: The `SymbolicValue` to evaluate.
-/// - `assignment`: A hash map of variable assignments.
+/// - `prime`: A reference to the prime modulus used for modular arithmetic.
+/// - `value`: A reference to the symbolic value to evaluate. This can be a constant, variable, or a more complex expression.
+/// - `assignment`: A hash map containing the current assignment of symbolic variables to their resolved `BigInt` values.
+/// - `symbolic_library`: A mutable reference to the symbolic library that contains metadata about symbolic values and functions.
 ///
 /// # Returns
-/// The evaluated `SymbolicValue`.
+/// - A `SymbolicValue` representing the evaluated result. This could be a resolved constant, a partially evaluated symbolic structure,
+///   or the result of a function call or expression.
+///
+/// # Behavior
+/// 1. **Constant Evaluation**: If the value is a constant, it is returned directly.
+/// 2. **Variable Resolution**: If the value is a variable, the function retrieves its value from the `assignment` map. If the variable
+///    is not found, the function panics.
+/// 3. **Array Evaluation**: Arrays and uniform arrays are evaluated element-wise.
+/// 4. **Expression Evaluation**:
+///    - **Assignments**: Evaluates the left-hand side and right-hand side of the assignment, checking their equality.
+///    - **Binary Operations**: Evaluates the operands and applies the specified operator.
+///    - **Unary Operations**: Evaluates the operand and applies the specified unary operator.
+/// 5. **Conditionals**: Evaluates the condition and returns the result of the appropriate branch (then or else).
+/// 6. **Function Calls**: Executes the function body with the provided arguments, returning the result of the function.
+///
+/// # Errors
+/// - Panics if:
+///   - A variable referenced in the value is not present in the `assignment` map.
+///   - An unsupported operation or invalid symbolic structure is encountered.
+///   - A required operation cannot be applied due to type mismatches (e.g., non-integer operations on integers).
+///
+/// # Notes
+/// - The function assumes all symbolic expressions and structures are well-formed.
+/// - Modular arithmetic is applied where applicable, with values reduced by the given prime.
+/// - The function supports partial evaluation of symbolic expressions when full resolution is not possible.
 pub fn evaluate_symbolic_value(
     prime: &BigInt,
     value: &SymbolicValue,
@@ -788,7 +847,7 @@ pub fn verify_assignment(
     symbolic_trace: &[SymbolicValueRef],
     side_constraints: &[SymbolicValueRef],
     assignment: &FxHashMap<SymbolicName, BigInt>,
-    setting: &VerificationSetting,
+    setting: &BaseVerificationConfig,
 ) -> VerificationResult {
     let is_satisfy_tc = evaluate_constraints(
         &setting.prime,

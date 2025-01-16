@@ -15,11 +15,12 @@ use std::time;
 use colored::Colorize;
 use env_logger;
 use input_user::Input;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use num_bigint_dig::BigInt;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde_json::json;
 
 use program_structure::ast::Expression;
 use program_structure::program_archive::ProgramArchive;
@@ -29,11 +30,20 @@ use executor::symbolic_setting::{
     get_default_setting_for_concrete_execution, get_default_setting_for_symbolic_execution,
 };
 use executor::symbolic_value::{OwnerName, SymbolicLibrary};
-use serde_json::json;
+
+use solver::mutation_config::load_config_from_json;
+use solver::mutation_test_crossover_fn::random_crossover;
+use solver::mutation_test_evolution_fn::simple_evolution;
+use solver::mutation_test_trace_fitness_fn::evaluate_trace_fitness_by_error;
+use solver::mutation_test_trace_initialization_fn::initialize_population_with_random_constant_replacement;
+use solver::mutation_test_trace_mutation_fn::mutate_trace_with_random_constant_replacement;
+use solver::mutation_test_trace_selection_fn::roulette_selection;
+use solver::mutation_test_update_input_fn::update_input_population_with_random_sampling;
 use solver::{
     brute_force::brute_force_search, mutation_test::mutation_test_search,
-    unused_outputs::check_unused_outputs, utils::VerificationSetting,
+    unused_outputs::check_unused_outputs, utils::BaseVerificationConfig,
 };
+
 use stats::ast_stats::ASTStats;
 use stats::symbolic_stats::{print_constraint_summary_statistics_pretty, ConstraintStatistics};
 
@@ -112,7 +122,7 @@ fn start() -> Result<(), ()> {
         FxHashSet::from_iter(["IsZero".to_string(), "Num2Bits".to_string()])
     } else {
         FxHashSet::from_iter(
-            read_file_to_lines(&user_input.path_to_mutation_setting())
+            read_file_to_lines(&&&user_input.path_to_whitelist())
                 .unwrap()
                 .into_iter(),
         )
@@ -175,11 +185,11 @@ fn start() -> Result<(), ()> {
         }
     }
 
-    let setting = get_default_setting_for_symbolic_execution(
+    let base_config = get_default_setting_for_symbolic_execution(
         BigInt::from_str(&user_input.debug_prime()).unwrap(),
         user_input.constraint_assert_dissabled_flag,
     );
-    let mut sym_executor = SymbolicExecutor::new(&mut symbolic_library, &setting);
+    let mut sym_executor = SymbolicExecutor::new(&mut symbolic_library, &base_config);
 
     match &program_archive.initial_template_call {
         Expression::Call { id, args, .. } => {
@@ -258,7 +268,7 @@ fn start() -> Result<(), ()> {
                     _ => unimplemented!(),
                 }
 
-                let verification_setting = VerificationSetting {
+                let verification_base_config = BaseVerificationConfig {
                     target_template_name: main_template_name.to_string(),
                     prime: BigInt::from_str(&user_input.debug_prime()).unwrap(),
                     range: BigInt::from_str(&user_input.heuristics_range()).unwrap(),
@@ -270,7 +280,7 @@ fn start() -> Result<(), ()> {
                 };
 
                 if let Some(counter_example_for_unused_outputs) =
-                    check_unused_outputs(&mut sym_executor, &verification_setting)
+                    check_unused_outputs(&mut sym_executor, &verification_base_config)
                 {
                     is_safe = false;
                     println!(
@@ -279,15 +289,17 @@ fn start() -> Result<(), ()> {
                             .lookup_fmt(&sym_executor.symbolic_library.id2name)
                     );
                 } else {
-                    let subse_setting = get_default_setting_for_concrete_execution(
+                    let subse_base_config = get_default_setting_for_concrete_execution(
                         BigInt::from_str(&user_input.debug_prime()).unwrap(),
                         user_input.constraint_assert_dissabled_flag,
                     );
-                    let mut conc_executor =
-                        SymbolicExecutor::new(&mut sym_executor.symbolic_library, &subse_setting);
+                    let mut conc_executor = SymbolicExecutor::new(
+                        &mut sym_executor.symbolic_library,
+                        &subse_base_config,
+                    );
                     conc_executor.feed_arguments(
-                        &verification_setting.template_param_names,
-                        &verification_setting.template_param_values,
+                        &verification_base_config.template_param_names,
+                        &verification_base_config.template_param_values,
                     );
 
                     let mut auxiliary_result = json!({});
@@ -296,30 +308,42 @@ fn start() -> Result<(), ()> {
                             &mut conc_executor,
                             &sym_executor.cur_state.symbolic_trace.clone(),
                             &sym_executor.cur_state.side_constraints.clone(),
-                            &verification_setting,
+                            &verification_base_config,
                         ),
                         "full" => brute_force_search(
                             &mut conc_executor,
                             &sym_executor.cur_state.symbolic_trace.clone(),
                             &sym_executor.cur_state.side_constraints.clone(),
-                            &verification_setting,
+                            &verification_base_config,
                         ),
                         "heuristics" => brute_force_search(
                             &mut conc_executor,
                             &sym_executor.cur_state.symbolic_trace.clone(),
                             &sym_executor.cur_state.side_constraints.clone(),
-                            &verification_setting,
+                            &verification_base_config,
                         ),
                         "ga" => {
+                            let mutation_config =
+                                load_config_from_json(&&user_input.path_to_mutation_setting())
+                                    .unwrap();
+                            info!("\n{}", mutation_config);
+
                             let result = mutation_test_search(
                                 &mut conc_executor,
                                 &sym_executor.cur_state.symbolic_trace.clone(),
                                 &sym_executor.cur_state.side_constraints.clone(),
-                                &verification_setting,
-                                &user_input.path_to_mutation_setting(),
+                                &verification_base_config,
+                                &mutation_config,
+                                initialize_population_with_random_constant_replacement,
+                                update_input_population_with_random_sampling,
+                                evaluate_trace_fitness_by_error,
+                                simple_evolution,
+                                mutate_trace_with_random_constant_replacement,
+                                random_crossover,
+                                roulette_selection,
                             );
-                            auxiliary_result["mutation_test_setting"] =
-                                serde_json::to_value(result.mutation_setting)
+                            auxiliary_result["mutation_test_config"] =
+                                serde_json::to_value(result.mutation_config)
                                     .expect("Failed to serialize to JSON");
                             auxiliary_result["mutation_test_log"] = json!({"random_seed":result.random_seed,"generation":result.generation, "fitness_score_log":result.fitness_score_log});
                             result.counter_example
