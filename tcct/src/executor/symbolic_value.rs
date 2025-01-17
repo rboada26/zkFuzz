@@ -351,9 +351,9 @@ pub struct SymbolicFunction {
 /// Represents a symbolic component used in the symbolic execution process.
 #[derive(Default, Clone)]
 pub struct SymbolicComponent {
-    pub template_name: usize,
+    pub template_id: usize,
     pub args: Vec<SymbolicValueRef>,
-    pub symbol_optional_binding_map: FxHashMap<SymbolicName, Option<SymbolicValue>>,
+    pub inputs_binding_map: FxHashMap<SymbolicName, Option<SymbolicValue>>,
     pub id2dimensions: FxHashMap<usize, Vec<usize>>,
     pub is_done: bool,
 }
@@ -723,7 +723,7 @@ pub fn evaluate_binary_op(
             ExpressionInfixOpcode::Mul => SymbolicValue::ConstantInt((lv * rv) % prime),
             ExpressionInfixOpcode::Pow => SymbolicValue::ConstantInt(modpow(lv, rv, prime)),
             ExpressionInfixOpcode::Div => {
-                if rv.is_zero() {
+                if lv.is_zero() || rv.is_zero() {
                     SymbolicValue::ConstantInt(BigInt::zero())
                 } else {
                     let mut r = prime.clone();
@@ -744,12 +744,20 @@ pub fn evaluate_binary_op(
                     SymbolicValue::ConstantInt((lv * rv_inv) % prime)
                 }
             }
-            ExpressionInfixOpcode::IntDiv => SymbolicValue::ConstantInt(if rv.is_zero() {
-                BigInt::zero()
-            } else {
-                lv / rv
-            }),
-            ExpressionInfixOpcode::Mod => SymbolicValue::ConstantInt(lv % rv),
+            ExpressionInfixOpcode::IntDiv => {
+                SymbolicValue::ConstantInt(if lv.is_zero() || rv.is_zero() {
+                    BigInt::zero()
+                } else {
+                    lv / rv
+                })
+            }
+            ExpressionInfixOpcode::Mod => {
+                SymbolicValue::ConstantInt(if lv.is_zero() || rv.is_zero() {
+                    BigInt::zero()
+                } else {
+                    lv % rv
+                })
+            }
             ExpressionInfixOpcode::BitOr => SymbolicValue::ConstantInt(lv | rv),
             ExpressionInfixOpcode::BitAnd => SymbolicValue::ConstantInt(lv & rv),
             ExpressionInfixOpcode::BitXor => SymbolicValue::ConstantInt(lv ^ rv),
@@ -899,7 +907,7 @@ pub fn decompose_uniform_array(
     (current, dims)
 }
 
-pub fn create_nested_array(
+pub fn initialize_symbolic_nested_array_with_value(
     dims: &[usize],
     initial_value: SymbolicValueRef,
 ) -> Vec<SymbolicValueRef> {
@@ -911,12 +919,38 @@ pub fn create_nested_array(
         vec![initial_value; dims[0]]
     } else {
         vec![
-            Rc::new(SymbolicValue::Array(create_nested_array(
-                &dims[1..],
-                initial_value.clone()
-            )));
+            Rc::new(SymbolicValue::Array(
+                initialize_symbolic_nested_array_with_value(&dims[1..], initial_value.clone())
+            ));
             dims[0]
         ]
+    }
+}
+
+pub fn initialize_symbolic_nested_array_with_name(
+    dims: &[usize],
+    sym_name: &SymbolicName,
+) -> SymbolicValue {
+    if dims.is_empty() {
+        SymbolicValue::Variable(sym_name.clone())
+    } else {
+        SymbolicValue::Array(
+            (0..dims[0])
+                .map(|i| {
+                    let mut new_sym_name = sym_name.clone();
+                    let mut access = new_sym_name.access.unwrap_or_default();
+                    access.push(SymbolicAccess::ArrayAccess(SymbolicValue::ConstantInt(
+                        BigInt::from_usize(i).unwrap(),
+                    )));
+                    new_sym_name.access = Some(access);
+                    // new_left_var_name.update_hash();
+                    Rc::new(initialize_symbolic_nested_array_with_name(
+                        &dims[1..],
+                        &new_sym_name,
+                    ))
+                })
+                .collect(),
+        )
     }
 }
 
