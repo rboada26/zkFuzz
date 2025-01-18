@@ -669,7 +669,7 @@ pub fn evaluate_symbolic_value(
         SymbolicValue::Call(id, args) => {
             let setting = SymbolicExecutorSetting {
                 prime: prime.clone(),
-                skip_initialization_blocks: false,
+                is_input_overwrite_disabled: false,
                 only_initialization_blocks: false,
                 off_trace: true,
                 keep_track_constraints: false,
@@ -899,11 +899,13 @@ pub fn verify_assignment(
                 .output_ids
                 .contains(&k.id)
             {
-                let original_sym_value = &sexe.cur_state.symbol_binding_map[&k];
-                let original_int_value = match &**original_sym_value {
+                let original_sym_value = sexe.cur_state.symbol_binding_map[&k].clone();
+                let simplified_sym_value =
+                    sexe.simplify_variables(&original_sym_value, std::usize::MAX, false, false);
+                let original_int_value = match simplified_sym_value {
                     SymbolicValue::ConstantInt(num) => num.clone(),
                     SymbolicValue::ConstantBool(b) => {
-                        if *b {
+                        if b {
                             BigInt::one()
                         } else {
                             BigInt::zero()
