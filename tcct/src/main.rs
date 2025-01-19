@@ -35,17 +35,26 @@ use solver::mutation_config::load_config_from_json;
 use solver::mutation_test_crossover_fn::random_crossover;
 use solver::mutation_test_evolution_fn::simple_evolution;
 use solver::mutation_test_trace_fitness_fn::evaluate_trace_fitness_by_error;
-use solver::mutation_test_trace_initialization_fn::initialize_population_with_random_constant_replacement;
+use solver::mutation_test_trace_initialization_fn::{
+    initialize_population_with_operator_mutation_and_random_constant_replacement,
+    initialize_population_with_random_constant_replacement,
+};
 use solver::mutation_test_trace_mutation_fn::mutate_trace_with_random_constant_replacement;
 use solver::mutation_test_trace_selection_fn::roulette_selection;
-use solver::mutation_test_update_input_fn::update_input_population_with_random_sampling;
+use solver::mutation_test_update_input_fn::{
+    update_input_population_with_coverage_maximization,
+    update_input_population_with_random_sampling,
+};
 use solver::{
     brute_force::brute_force_search, mutation_test::mutation_test_search,
     unused_outputs::check_unused_outputs, utils::BaseVerificationConfig,
 };
 
 use stats::ast_stats::ASTStats;
-use stats::symbolic_stats::{print_constraint_summary_statistics_pretty, ConstraintStatistics};
+use stats::symbolic_stats::{
+    print_constraint_summary_statistics_csv, print_constraint_summary_statistics_pretty,
+    ConstraintStatistics,
+};
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const RESET: &str = "\x1b[0m";
@@ -187,7 +196,7 @@ fn start() -> Result<(), ()> {
 
     let base_config = get_default_setting_for_symbolic_execution(
         BigInt::from_str(&user_input.debug_prime()).unwrap(),
-        user_input.constraint_assert_dissabled_flag,
+        user_input.constraint_assert_dissabled_flag(),
     );
     let mut sym_executor = SymbolicExecutor::new(&mut symbolic_library, &base_config);
 
@@ -253,20 +262,14 @@ fn start() -> Result<(), ()> {
                 );
                 println!("{}", "🩺 Scanning TCCT Instances...".green());
 
-                let mut main_template_name = "";
-                let mut template_param_names = Vec::new();
-                let mut template_param_values = Vec::new();
-                match &program_archive.initial_template_call {
-                    Expression::Call { id, args, .. } => {
-                        main_template_name = id;
-                        let template = program_archive.templates[id].clone();
-                        if !user_input.flag_symbolic_template_params {
-                            template_param_names = template.get_name_of_params().clone();
-                            template_param_values = args.clone();
+                let (main_template_name, template_param_names, template_param_values) =
+                    match &program_archive.initial_template_call {
+                        Expression::Call { id, args, .. } => {
+                            let template = &program_archive.templates[id];
+                            (id, template.get_name_of_params().clone(), args.clone())
                         }
-                    }
-                    _ => unimplemented!(),
-                }
+                        _ => unimplemented!(),
+                    };
 
                 let verification_base_config = BaseVerificationConfig {
                     target_template_name: main_template_name.to_string(),
@@ -295,7 +298,7 @@ fn start() -> Result<(), ()> {
                 } else {
                     let subse_base_config = get_default_setting_for_concrete_execution(
                         BigInt::from_str(&user_input.debug_prime()).unwrap(),
-                        user_input.constraint_assert_dissabled_flag,
+                        user_input.constraint_assert_dissabled_flag(),
                     );
                     let mut conc_executor = SymbolicExecutor::new(
                         &mut sym_executor.symbolic_library,
@@ -332,14 +335,29 @@ fn start() -> Result<(), ()> {
                                     .unwrap();
                             info!("\n{}", mutation_config);
 
+                            let trace_initialization_fn = match mutation_config.trace_mutation_method.as_str() {
+                                "constant" => initialize_population_with_random_constant_replacement,
+                                "constant_operator" => initialize_population_with_operator_mutation_and_random_constant_replacement,
+                                _ => panic!("`trace_mutation_method` should be one of [`constant`, `constant_operator`]")
+                            };
+
+                            let update_input_fn = match mutation_config
+                                .input_initialization_method
+                                .as_str()
+                            {
+                                "random" => update_input_population_with_random_sampling,
+                                "coverage" => update_input_population_with_coverage_maximization,
+                                _ => panic!("`input_initialization_method` should be one of [`random`, `coverage`]")
+                            };
+
                             let result = mutation_test_search(
                                 &mut conc_executor,
                                 &sym_executor.cur_state.symbolic_trace.clone(),
                                 &sym_executor.cur_state.side_constraints.clone(),
                                 &verification_base_config,
                                 &mutation_config,
-                                initialize_population_with_random_constant_replacement,
-                                update_input_population_with_random_sampling,
+                                trace_initialization_fn,
+                                update_input_fn,
                                 evaluate_trace_fitness_by_error,
                                 simple_evolution,
                                 mutate_trace_with_random_constant_replacement,
@@ -439,7 +457,7 @@ fn start() -> Result<(), ()> {
             if user_input.flag_printout_stats {
                 println!(
                     "\n{}",
-                    "🪶 Stats of Trace Constraint ══════════════════════"
+                    "🪶 Stats of Symbolic Trace  ══════════════════════"
                         .yellow()
                         .bold()
                 );
@@ -451,6 +469,9 @@ fn start() -> Result<(), ()> {
                         .bold()
                 );
                 print_constraint_summary_statistics_pretty(&ss);
+            } else if user_input.flag_printout_stats_csv {
+                print_constraint_summary_statistics_csv(&ts);
+                print_constraint_summary_statistics_csv(&ss);
             }
             println!(
                 "{}",

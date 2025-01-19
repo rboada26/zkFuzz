@@ -16,7 +16,6 @@ pub struct ConstraintStatistics {
     pub constant_counts: usize,
     pub conditional_counts: usize,
     pub array_counts: usize,
-    pub tuple_counts: usize,
     pub function_call_counts: HashMap<usize, usize>,
     pub cache: HashSet<SymbolicValue>,
 }
@@ -91,12 +90,6 @@ impl ConstraintStatistics {
                     self.update_from_symbolic_value(elem, depth + 1);
                 }
             }
-            SymbolicValue::Tuple(elements) => {
-                self.tuple_counts += 1;
-                for elem in elements {
-                    self.update_from_symbolic_value(elem, depth + 1);
-                }
-            }
             SymbolicValue::UniformArray(value, size) => {
                 self.array_counts += 1;
                 self.update_from_symbolic_value(value, depth + 1);
@@ -139,7 +132,6 @@ pub fn print_constraint_summary_statistics_pretty(stats: &ConstraintStatistics) 
     println!(" │ Constant            │ {:11} │", stats.constant_counts);
     println!(" │ Conditional         │ {:11} │", stats.conditional_counts);
     println!(" │ Array               │ {:11} │", stats.array_counts);
-    println!(" │ Tuple               │ {:11} │", stats.tuple_counts);
     println!(" └─────────────────────┴─────────────┘");
 
     let avg_depth = if !stats.constraint_depths.is_empty() {
@@ -176,9 +168,10 @@ pub fn print_constraint_summary_statistics_pretty(stats: &ConstraintStatistics) 
     } else {
         0.0
     };
-    println!(" • Average Count: {:.2}", var_avg);
+    println!(" • Total Number of Variables: {}", var_counts.len());
+    println!(" • Average Number of Usage  : {:.2}", var_avg);
     println!(
-        " • Maximum Count: {}",
+        " • Maximum Number of Usage  : {}",
         var_counts.iter().max().unwrap_or(&0)
     );
 
@@ -202,7 +195,6 @@ pub fn print_constraint_summary_statistics_csv(constraint_stats: &ConstraintStat
         "Constant_Counts",
         "Conditional_Counts",
         "Array_Counts",
-        "Tuple_Counts",
         "Avg_Depth",
         "Max_Depth",
         "Count_Mul",
@@ -225,6 +217,7 @@ pub fn print_constraint_summary_statistics_csv(constraint_stats: &ConstraintStat
         "Count_BitOr",
         "Count_BitAnd",
         "Count_BitXor",
+        "Number_of_Variable",
         "Variable_Avg_Count",
         "Variable_Max_Count",
         "Function_Avg_Count",
@@ -237,7 +230,6 @@ pub fn print_constraint_summary_statistics_csv(constraint_stats: &ConstraintStat
     values.push(constraint_stats.constant_counts.to_string());
     values.push(constraint_stats.conditional_counts.to_string());
     values.push(constraint_stats.array_counts.to_string());
-    values.push(constraint_stats.tuple_counts.to_string());
 
     let avg_depth = if !constraint_stats.constraint_depths.is_empty() {
         constraint_stats.constraint_depths.iter().sum::<usize>() as f64
@@ -269,11 +261,13 @@ pub fn print_constraint_summary_statistics_csv(constraint_stats: &ConstraintStat
     }
 
     let var_counts: Vec<usize> = constraint_stats.variable_counts.values().cloned().collect();
+    let num_vars = var_counts.len();
     let var_avg = if !var_counts.is_empty() {
         var_counts.iter().sum::<usize>() as f64 / var_counts.len() as f64
     } else {
         0.0
     };
+    values.push(num_vars.to_string());
     values.push(format!("{:.2}", var_avg));
     values.push(var_counts.iter().max().unwrap_or(&0).to_string());
 

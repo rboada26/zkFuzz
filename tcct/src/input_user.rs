@@ -37,6 +37,7 @@ pub struct Input {
     pub link_libraries : Vec<PathBuf>,
     pub flag_printout_ast: bool,
     pub flag_printout_stats: bool,
+    pub flag_printout_stats_csv: bool,
     pub flag_symbolic_template_params: bool,
     pub flag_save_output: bool,
     pub show_stats_of_ast: bool,
@@ -122,6 +123,7 @@ impl Input {
             constraint_assert_dissabled_flag: input_processing::get_constraint_assert_dissabled(&matches),
             flag_printout_ast: input_processing::get_ast(&matches),
             flag_printout_stats: input_processing::get_stats(&matches),
+            flag_printout_stats_csv: input_processing::get_stats_csv(&matches),
             flag_symbolic_template_params: input_processing::get_symbolic_template_params(&matches),
             flag_save_output: input_processing::get_save_output(&matches),
             show_stats_of_ast: input_processing::get_show_stats_of_ast(&matches),
@@ -353,6 +355,10 @@ mod input_processing {
         matches.is_present("print_stats")
     }
 
+    pub fn get_stats_csv(matches: &ArgMatches) -> bool {
+        matches.is_present("print_stats_csv")
+    }
+
     pub fn get_symbolic_template_params(matches: &ArgMatches) -> bool {
         matches.is_present("symbolic_template_params")
     }
@@ -456,7 +462,7 @@ mod input_processing {
     pub fn view() -> ArgMatches<'static> {
         App::new("circom compiler")
             .version(VERSION)
-            .author("Hideaki Takhashi and Jihwan Kim")
+            .author("Anonymous Authors")
             .about("ZKP Circuit Debugger")
             .arg(
                 Arg::with_name("input")
@@ -649,6 +655,13 @@ mod input_processing {
                     .takes_value(false)
                     .display_order(1010)
                     .help("(TCCT) Prints the stats of constraints"),
+            )
+            .arg(
+                Arg::with_name("print_stats_csv")
+                    .long("print_stats_csv")
+                    .takes_value(false)
+                    .display_order(1015)
+                    .help("(TCCT) Prints the stats of constraints in CSV format"),
             )
             .arg(
                 Arg::with_name("symbolic_template_params")

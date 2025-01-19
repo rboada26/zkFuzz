@@ -1894,7 +1894,7 @@ fn test_one_line_call() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let main_A_11_152_a = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+    let main_a_11_152_a = Rc::new(SymbolicValue::Variable(SymbolicName::new(
         sexe.symbolic_library.name2id["a"],
         Rc::new(vec![
             OwnerName {
@@ -1911,7 +1911,7 @@ fn test_one_line_call() {
         None,
     )));
 
-    let main_A_11_152_b = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+    let main_a_11_152_b = Rc::new(SymbolicValue::Variable(SymbolicName::new(
         sexe.symbolic_library.name2id["b"],
         Rc::new(vec![
             OwnerName {
@@ -1928,7 +1928,7 @@ fn test_one_line_call() {
         None,
     )));
 
-    let main_A_11_152_c = Rc::new(SymbolicValue::Variable(SymbolicName::new(
+    let main_a_11_152_c = Rc::new(SymbolicValue::Variable(SymbolicName::new(
         sexe.symbolic_library.name2id["c"],
         Rc::new(vec![
             OwnerName {
@@ -1994,17 +1994,17 @@ fn test_one_line_call() {
             main_n.clone(),
             Rc::new(SymbolicValue::ConstantInt(BigInt::from_str("2").unwrap())),
         ),
-        SymbolicValue::AssignEq(main_A_11_152_a.clone(), main_in_0.clone()),
-        SymbolicValue::AssignEq(main_A_11_152_b.clone(), main_in_1.clone()),
+        SymbolicValue::AssignEq(main_a_11_152_a.clone(), main_in_0.clone()),
+        SymbolicValue::AssignEq(main_a_11_152_b.clone(), main_in_1.clone()),
         SymbolicValue::AssignEq(
-            main_A_11_152_c.clone(),
+            main_a_11_152_c.clone(),
             Rc::new(SymbolicValue::BinaryOp(
-                main_A_11_152_a,
+                main_a_11_152_a,
                 DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Mul),
-                main_A_11_152_b,
+                main_a_11_152_b,
             )),
         ),
-        SymbolicValue::AssignEq(main_out, main_A_11_152_c),
+        SymbolicValue::AssignEq(main_out, main_a_11_152_c),
     ];
 
     for i in 0..ground_truth_constraints.len() {
@@ -2163,21 +2163,17 @@ fn test_unused_outputs() {
     let mut sexe = SymbolicExecutor::new(&mut symbolic_library, &setting);
     execute(&mut sexe, &program_archive);
 
-    let mut main_template_id = "";
-    let mut template_param_names = Vec::new();
-    let mut template_param_values = Vec::new();
-    match &program_archive.initial_template_call {
-        Expression::Call { id, args, .. } => {
-            main_template_id = id;
-            let template = program_archive.templates[id].clone();
-            template_param_names = template.get_name_of_params().clone();
-            template_param_values = args.clone();
-        }
-        _ => unimplemented!(),
-    }
+    let (main_template_name, template_param_names, template_param_values) =
+        match &program_archive.initial_template_call {
+            Expression::Call { id, args, .. } => {
+                let template = &program_archive.templates[id];
+                (id, template.get_name_of_params().clone(), args.clone())
+            }
+            _ => unimplemented!(),
+        };
 
     let verification_setting = BaseVerificationConfig {
-        target_template_name: main_template_id.to_string(),
+        target_template_name: main_template_name.to_string(),
         prime: prime.clone(),
         range: range.clone(),
         quick_mode: false,

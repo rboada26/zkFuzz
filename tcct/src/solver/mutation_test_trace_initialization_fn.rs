@@ -10,7 +10,7 @@ use crate::executor::symbolic_value::SymbolicValue;
 
 use crate::solver::mutation_config::MutationConfig;
 use crate::solver::mutation_test::Gene;
-use crate::solver::mutation_utils::draw_random_constant;
+use crate::solver::mutation_utils::draw_bigint_with_probabilities;
 use crate::solver::utils::BaseVerificationConfig;
 
 /// Initializes a population of `Gene` instances by replacing all symbolic trace positions
@@ -24,7 +24,8 @@ use crate::solver::utils::BaseVerificationConfig;
 /// - `pos`: A slice of indices representing positions in the symbolic trace to be initialized.
 /// - `_symbolic_trace`: A reference to the symbolic trace (`SymbolicTrace`). This parameter
 ///   is currently unused but reserved for potential future enhancements.
-/// - `base_config`: Configuration object providing base parameters for generating random constants.
+/// - `_base_config`: Configuration object providing base parameters for generating random constants.
+///   This parameter is currently unused but reserved for potential future enhancements.
 /// - `mutation_config`: Configuration object defining mutation parameters, such as the population size.
 /// - `rng`: A mutable reference to a random number generator for consistent randomization.
 ///
@@ -33,12 +34,12 @@ use crate::solver::utils::BaseVerificationConfig;
 ///
 /// # Details
 /// - For each position in the trace, a random constant value is generated using the
-///   `draw_random_constant` function and assigned as the symbolic value.
+///   `draw_bigint_with_probabilities` function and assigned as the symbolic value.
 /// - The size of the generated population is determined by `mutation_config.program_population_size`.
 pub fn initialize_population_with_random_constant_replacement(
     pos: &[usize],
     _symbolic_trace: &SymbolicTrace,
-    base_config: &BaseVerificationConfig,
+    _base_config: &BaseVerificationConfig,
     mutation_config: &MutationConfig,
     rng: &mut StdRng,
 ) -> Vec<Gene> {
@@ -48,7 +49,14 @@ pub fn initialize_population_with_random_constant_replacement(
                 .map(|p| {
                     (
                         p.clone(),
-                        SymbolicValue::ConstantInt(draw_random_constant(base_config, rng)),
+                        SymbolicValue::ConstantInt(
+                            draw_bigint_with_probabilities(
+                                &mutation_config.random_value_ranges,
+                                &mutation_config.random_value_probs,
+                                rng,
+                            )
+                            .unwrap(),
+                        ),
                     )
                 })
                 .collect()
@@ -92,7 +100,8 @@ lazy_static::lazy_static! {
 /// - `pos`: A slice of indices representing positions in the symbolic trace to be mutated.
 /// - `symbolic_trace`: A reference to the symbolic trace (`SymbolicTrace`) containing
 ///   symbolic expressions associated with the original program under mutation.
-/// - `base_config`: Configuration object providing base parameters for generating random constants.
+/// - `_base_config`: Configuration object providing base parameters for generating random constants.
+///   This parameter is currently unused but reserved for potential future enhancements.
 /// - `mutation_config`: Configuration object defining mutation parameters, such as population
 ///   size and operator mutation rate.
 /// - `rng`: A mutable reference to a random number generator for consistent randomization.
@@ -113,10 +122,10 @@ lazy_static::lazy_static! {
 /// # Panics
 /// - Panics if an unsupported opcode is encountered during operator mutation.
 /// - Panics if the related operator group for a given opcode is empty.
-fn initialize_population_with_operator_mutation_and_random_constant_replacement(
+pub fn initialize_population_with_operator_mutation_and_random_constant_replacement(
     pos: &[usize],
     symbolic_trace: &SymbolicTrace,
-    base_config: &BaseVerificationConfig,
+    _base_config: &BaseVerificationConfig,
     mutation_config: &MutationConfig,
     rng: &mut StdRng,
 ) -> Vec<Gene> {
@@ -150,13 +159,27 @@ fn initialize_population_with_operator_mutation_and_random_constant_replacement(
                         } else {
                             (
                                 p.clone(),
-                                SymbolicValue::ConstantInt(draw_random_constant(base_config, rng)),
+                                SymbolicValue::ConstantInt(
+                                    draw_bigint_with_probabilities(
+                                        &mutation_config.random_value_ranges,
+                                        &mutation_config.random_value_probs,
+                                        rng,
+                                    )
+                                    .unwrap(),
+                                ),
                             )
                         }
                     }
                     _ => (
                         p.clone(),
-                        SymbolicValue::ConstantInt(draw_random_constant(base_config, rng)),
+                        SymbolicValue::ConstantInt(
+                            draw_bigint_with_probabilities(
+                                &mutation_config.random_value_ranges,
+                                &mutation_config.random_value_probs,
+                                rng,
+                            )
+                            .unwrap(),
+                        ),
                     ),
                 })
                 .collect()
