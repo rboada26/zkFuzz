@@ -420,19 +420,22 @@ impl SymbolicLibrary {
     /// * `name` - Name under which the template will be registered within the library.
     /// * `body` - Block statement serving as the main logic body defining the behavior captured by the template.
     /// * `template_parameter_names` - List of names identifying parameters used within the template logic.
+    /// * `whitelist` -
+    /// * `is_lessthan_dissabled` -
     pub fn register_template(
         &mut self,
         name: String,
         body: &Statement,
         template_parameter_names: &Vec<String>,
         whitelist: &FxHashSet<String>,
+        is_lessthan_dissabled: bool,
     ) {
         let mut input_ids = FxHashSet::default();
         let mut output_ids = FxHashSet::default();
         let mut id2type = FxHashMap::default();
         let mut id2dimension_expressions = FxHashMap::default();
 
-        let is_lessthan = &name == "LessThan";
+        let is_lessthan = !is_lessthan_dissabled && &name == "LessThan";
         let is_safe = whitelist.contains(&name);
 
         let i = if let Some(i) = self.name2id.get(&name) {
@@ -750,7 +753,9 @@ pub fn evaluate_binary_op(
         | ExpressionInfixOpcode::LesserEq
         | ExpressionInfixOpcode::GreaterEq
         | ExpressionInfixOpcode::Eq
-        | ExpressionInfixOpcode::NotEq => (normalize_to_int(lhs), normalize_to_int(rhs)),
+        | ExpressionInfixOpcode::NotEq => {
+            (normalize_to_int(lhs, prime), normalize_to_int(rhs, prime))
+        }
         // Keep booleans as they are for logical operators
         ExpressionInfixOpcode::BoolAnd | ExpressionInfixOpcode::BoolOr => {
             (normalize_to_bool(lhs, prime), normalize_to_bool(rhs, prime))
@@ -835,10 +840,17 @@ pub fn evaluate_binary_op(
     }
 }
 
-fn normalize_to_int(val: &SymbolicValue) -> SymbolicValue {
+fn normalize_to_int(val: &SymbolicValue, prime: &BigInt) -> SymbolicValue {
     match val {
         SymbolicValue::ConstantBool(b) => {
             SymbolicValue::ConstantInt(if *b { BigInt::one() } else { BigInt::zero() })
+        }
+        SymbolicValue::ConstantInt(num) => {
+            if num.is_negative() {
+                SymbolicValue::ConstantInt(num + prime)
+            } else {
+                val.clone()
+            }
         }
         _ => val.clone(),
     }

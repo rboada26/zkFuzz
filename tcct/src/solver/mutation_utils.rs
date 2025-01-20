@@ -9,7 +9,6 @@ use rustc_hash::FxHashMap;
 use crate::executor::symbolic_state::SymbolicTrace;
 use crate::executor::symbolic_value::SymbolicValue;
 
-
 /// Draws a random BigInt from specified ranges based on given probabilities.
 ///
 /// # Arguments
