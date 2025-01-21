@@ -1,5 +1,7 @@
+use std::cmp::max;
+
 use rand::rngs::StdRng;
-use rand::seq::IteratorRandom;
+use rand::seq::{IteratorRandom, SliceRandom};
 use rand::Rng;
 
 use program_structure::ast::ExpressionInfixOpcode;
@@ -38,14 +40,19 @@ use crate::solver::utils::BaseVerificationConfig;
 /// - The size of the generated population is determined by `mutation_config.program_population_size`.
 pub fn initialize_population_with_random_constant_replacement(
     pos: &[usize],
+    program_population_size: usize,
     _symbolic_trace: &SymbolicTrace,
     _base_config: &BaseVerificationConfig,
     mutation_config: &MutationConfig,
     rng: &mut StdRng,
 ) -> Vec<Gene> {
-    (0..mutation_config.program_population_size)
+    (0..program_population_size)
         .map(|_| {
-            pos.iter()
+            let num_mutations =
+                rng.gen_range(1, max(pos.len(), mutation_config.max_num_mutation_points));
+            let selected_pos: Vec<_> = pos.choose_multiple(rng, num_mutations).cloned().collect();
+            selected_pos
+                .iter()
                 .map(|p| {
                     (
                         p.clone(),
@@ -124,14 +131,19 @@ lazy_static::lazy_static! {
 /// - Panics if the related operator group for a given opcode is empty.
 pub fn initialize_population_with_operator_mutation_and_random_constant_replacement(
     pos: &[usize],
+    program_population_size: usize,
     symbolic_trace: &SymbolicTrace,
     _base_config: &BaseVerificationConfig,
     mutation_config: &MutationConfig,
     rng: &mut StdRng,
 ) -> Vec<Gene> {
-    (0..mutation_config.program_population_size)
+    (0..program_population_size)
         .map(|_| {
-            pos.iter()
+            let num_mutations =
+                rng.gen_range(1, max(pos.len(), mutation_config.max_num_mutation_points));
+            let selected_pos: Vec<_> = pos.choose_multiple(rng, num_mutations).cloned().collect();
+            selected_pos
+                .iter()
                 .map(|p| match &*symbolic_trace[*p] {
                     SymbolicValue::BinaryOp(left, op, right) => {
                         if rng.gen::<f64>() < mutation_config.operator_mutation_rate {
