@@ -7,7 +7,7 @@ use crate::executor::symbolic_value::{SymbolicName, SymbolicValue, SymbolicValue
 
 use crate::solver::mutation_utils::apply_trace_mutation;
 use crate::solver::utils::{
-    accumulate_error_of_constraints, emulate_symbolic_trace, is_vulnerable, verify_assignment,
+    accumulate_error_of_constraints, emulate_symbolic_trace, evaluate_constraints, is_equal_mod,
     BaseVerificationConfig, CounterExample, UnderConstrainedType, VerificationResult,
 };
 
@@ -45,7 +45,6 @@ use crate::solver::utils::{
 /// - A score of zero indicates either an over-constrained or under-constrained trace with a corresponding counterexample.
 ///
 /// # Notes
-/// - If the provided `trace_mutation` is empty, the function evaluates the original trace directly.
 /// - This function terminates early if a valid counterexample is found.
 pub fn evaluate_trace_fitness_by_error(
     sexe: &mut SymbolicExecutor,
@@ -55,6 +54,7 @@ pub fn evaluate_trace_fitness_by_error(
     trace_mutation: &FxHashMap<usize, SymbolicValue>,
     inputs_assignment: &Vec<FxHashMap<SymbolicName, BigInt>>,
 ) -> (usize, BigInt, Option<CounterExample>) {
+    // Apply the given mutations to the symbolic trace.
     let mutated_symbolic_trace = apply_trace_mutation(symbolic_trace, trace_mutation);
 
     let mut max_idx = 0_usize;
@@ -62,83 +62,124 @@ pub fn evaluate_trace_fitness_by_error(
     let mut counter_example = None;
 
     for (i, inp) in inputs_assignment.iter().enumerate() {
-        let mut assignment = inp.clone();
+        // Clone the input assignment for evaluation with the original program.
+        let mut assignment_for_original = inp.clone();
 
-        let (is_success, failure_pos) = emulate_symbolic_trace(
+        // Emulate the original trace to evaluate its behavior on the given input.
+        // Even if an assertion fails, the function proceeds, treating it as a modified trace with no assertions.
+        let (is_original_program_success, original_program_failure_pos) = emulate_symbolic_trace(
             &base_config.prime,
-            &mutated_symbolic_trace,
-            &mut assignment,
+            &symbolic_trace,
+            &mut assignment_for_original,
             &mut sexe.symbolic_library,
         );
-        let error_of_side_constraints = accumulate_error_of_constraints(
+        // Check if the original trace satisfies the side constraints.
+        let is_original_satisfy_sc = evaluate_constraints(
             &base_config.prime,
             side_constraints,
-            &assignment,
+            &assignment_for_original,
             &mut sexe.symbolic_library,
         );
-        let mut score = -error_of_side_constraints.clone();
+        // The original program succeeds, but the side constraints fail.
+        if is_original_program_success && !is_original_satisfy_sc {
+            counter_example = Some(CounterExample {
+                flag: VerificationResult::OverConstrained,
+                target_output: None,
+                assignment: assignment_for_original.clone(),
+            });
+            max_idx = i;
+            max_score = BigInt::zero();
+            break;
+        }
 
-        if error_of_side_constraints.is_zero() {
-            if is_success {
-                let flag = verify_assignment(
-                    sexe,
-                    symbolic_trace,
-                    side_constraints,
-                    &assignment,
-                    base_config,
-                );
-                if is_vulnerable(&flag) {
-                    max_idx = i;
-                    max_score = BigInt::zero();
-                    counter_example = if let VerificationResult::UnderConstrained(
-                        UnderConstrainedType::NonDeterministic(sym_name, _, _),
-                    ) = &flag
-                    {
-                        Some(CounterExample {
-                            flag: flag.clone(),
-                            target_output: Some(sym_name.clone()),
-                            assignment: assignment.clone(),
-                        })
-                    } else {
-                        Some(CounterExample {
-                            flag: flag,
-                            target_output: None,
-                            assignment: assignment.clone(),
-                        })
-                    };
-                    break;
-                } else {
-                    score = -base_config.prime.clone();
-                }
-            } else {
-                if trace_mutation.is_empty() {
-                    max_idx = i;
-                    max_score = BigInt::zero();
-                    counter_example = Some(CounterExample {
-                        flag: VerificationResult::UnderConstrained(
-                            UnderConstrainedType::UnexpectedInput(
-                                failure_pos,
-                                mutated_symbolic_trace[failure_pos]
-                                    .lookup_fmt(&sexe.symbolic_library.id2name),
-                            ),
+        // The original program fails, but the mutated program, where all assertions are removed,
+        // satisfies the side constraints.
+        if !is_original_program_success && is_original_satisfy_sc {
+            counter_example = Some(CounterExample {
+                flag: VerificationResult::UnderConstrained(UnderConstrainedType::UnexpectedInput(
+                    original_program_failure_pos,
+                    symbolic_trace[original_program_failure_pos]
+                        .lookup_fmt(&sexe.symbolic_library.id2name),
+                )),
+                target_output: None,
+                assignment: assignment_for_original.clone(),
+            });
+            max_idx = i;
+            max_score = BigInt::zero();
+            break;
+        }
+
+        // Clone the input assignment for evaluating the mutated trace.
+        let mut assignment_for_mutation = inp.clone();
+
+        // Emulate the mutated trace and evaluate the error in side constraints.
+        let (_is_mutated_program_success, _mutated_program_failure_pos) = emulate_symbolic_trace(
+            &base_config.prime,
+            &mutated_symbolic_trace,
+            &mut assignment_for_mutation,
+            &mut sexe.symbolic_library,
+        );
+        // Calculate the error in side constraints for the mutated trace.
+        let error_of_side_constraints_for_mutated_assignment = accumulate_error_of_constraints(
+            &base_config.prime,
+            side_constraints,
+            &assignment_for_mutation,
+            &mut sexe.symbolic_library,
+        );
+        let mut score = -error_of_side_constraints_for_mutated_assignment.clone();
+
+        // Check for valid solutions that satisfy all side constraints.
+        if error_of_side_constraints_for_mutated_assignment.is_zero() {
+            if !is_original_program_success {
+                // the original fails but the mutated satisfies constraints.
+                counter_example = Some(CounterExample {
+                    flag: VerificationResult::UnderConstrained(
+                        UnderConstrainedType::UnexpectedInput(
+                            original_program_failure_pos,
+                            symbolic_trace[original_program_failure_pos]
+                                .lookup_fmt(&sexe.symbolic_library.id2name),
                         ),
-                        target_output: None,
-                        assignment: assignment.clone(),
-                    });
-                    break;
-                }
-            }
-        } else {
-            if trace_mutation.is_empty() && is_success {
+                    ),
+                    target_output: None,
+                    assignment: assignment_for_mutation.clone(),
+                });
                 max_idx = i;
                 max_score = BigInt::zero();
-                counter_example = Some(CounterExample {
-                    flag: VerificationResult::OverConstrained,
-                    target_output: None,
-                    assignment: assignment.clone(),
-                });
                 break;
+            } else {
+                // Verify consistency of outputs for valid solutions.
+                for (k, v) in assignment_for_original {
+                    if k.owner.len() == 1
+                        && sexe.symbolic_library.template_library
+                            [&sexe.symbolic_library.name2id[&base_config.target_template_name]]
+                            .output_ids
+                            .contains(&k.id)
+                    {
+                        // If outputs differ, mark as a non-deterministic under-constrained issue.
+                        if !is_equal_mod(&v, &assignment_for_mutation[&k], &base_config.prime) {
+                            counter_example = Some(CounterExample {
+                                flag: VerificationResult::UnderConstrained(
+                                    UnderConstrainedType::NonDeterministic(
+                                        k.clone(),
+                                        k.lookup_fmt(&sexe.symbolic_library.id2name),
+                                        v.clone(),
+                                    ),
+                                ),
+                                target_output: Some(k.clone()),
+                                assignment: assignment_for_mutation,
+                            });
+                            break;
+                        }
+                    }
+                }
+                if counter_example.is_some() {
+                    max_idx = i;
+                    max_score = BigInt::zero();
+                    break;
+                }
             }
+            // Penalize valid solutions by setting their score to the worst possible value.
+            score = -base_config.prime.clone();
         }
 
         if score > max_score {

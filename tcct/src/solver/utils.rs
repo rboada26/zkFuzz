@@ -18,7 +18,7 @@ use crate::executor::debug_ast::{
 use crate::executor::symbolic_execution::SymbolicExecutor;
 use crate::executor::symbolic_setting::SymbolicExecutorSetting;
 use crate::executor::symbolic_value::{
-    evaluate_binary_op, OwnerName, SymbolicLibrary, SymbolicName, SymbolicValue, SymbolicValueRef,
+    evaluate_binary_op, OwnerName, SymbolicLibrary, SymbolicName, SymbolicValue, SymbolicValueRef,normalize_to_bool,normalize_to_int
 };
 
 #[derive(Clone)]
@@ -485,6 +485,7 @@ pub fn emulate_symbolic_trace(
                 let mut lhs_val = evaluate_symbolic_value(prime, lhs, assignment, symbolic_library, &mut used_variables);
                 let mut rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library, &mut used_variables);
                 
+                /* 
                 if let ExpressionInfixOpcode::Eq = op.0 {
                     if let SymbolicValue::Variable(var_name) = &**lhs {
                         if is_left_unused {
@@ -501,9 +502,37 @@ pub fn emulate_symbolic_trace(
                             }
                         }
                     }
-                }
+                }*/
+
+                let (normalized_lhs, normalized_rhs) = match &op.0 {
+                    // Convert booleans to integers for arithmetic or bitwise operators
+                    ExpressionInfixOpcode::Add
+                    | ExpressionInfixOpcode::Sub
+                    | ExpressionInfixOpcode::Mul
+                    | ExpressionInfixOpcode::Pow
+                    | ExpressionInfixOpcode::Div
+                    | ExpressionInfixOpcode::IntDiv
+                    | ExpressionInfixOpcode::Mod
+                    | ExpressionInfixOpcode::BitOr
+                    | ExpressionInfixOpcode::BitAnd
+                    | ExpressionInfixOpcode::BitXor
+                    | ExpressionInfixOpcode::ShiftL
+                    | ExpressionInfixOpcode::ShiftR
+                    | ExpressionInfixOpcode::Lesser
+                    | ExpressionInfixOpcode::Greater
+                    | ExpressionInfixOpcode::LesserEq
+                    | ExpressionInfixOpcode::GreaterEq
+                    | ExpressionInfixOpcode::Eq
+                    | ExpressionInfixOpcode::NotEq => {
+                        (normalize_to_int(&lhs_val, prime), normalize_to_int(&rhs_val, prime))
+                    }
+                    // Keep booleans as they are for logical operators
+                    ExpressionInfixOpcode::BoolAnd | ExpressionInfixOpcode::BoolOr => {
+                        (normalize_to_bool(&lhs_val, prime), normalize_to_bool(&rhs_val, prime))
+                    } //_ => (lhs.clone(), rhs.clone()), // Default case
+                };
                 
-                let flag = match (&lhs_val, &rhs_val) {
+                let flag = match (&normalized_lhs, &normalized_rhs) {
                     (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => {
                         match op.0 {
                             ExpressionInfixOpcode::Lesser => lv % prime < rv % prime,
@@ -879,6 +908,15 @@ pub fn evaluate_error_of_symbolic_value(
                 (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => {
                     (lv % prime - rv % prime).abs()
                 }
+                (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantBool(flag)) => {
+                    (lv % prime - if *flag {BigInt::one()} else {BigInt::zero()}).abs()
+                }
+                (SymbolicValue::ConstantBool(flag), SymbolicValue::ConstantInt(rv)) => {
+                    (rv % prime - if *flag {BigInt::one()} else {BigInt::zero()}).abs()
+                }
+                (SymbolicValue::ConstantBool(lflag), SymbolicValue::ConstantBool(rflag)) => {
+                    if *lflag == *rflag {BigInt::zero()} else {BigInt::one()}
+                }
                 _ => panic!("Unassigned variables exist"),
             }
         }
@@ -980,7 +1018,7 @@ pub fn accumulate_error_of_constraints(
 ///
 /// # Returns
 /// `true` if `a ≡ b (mod p)`, otherwise `false`.
-fn is_equal_mod(a: &BigInt, b: &BigInt, p: &BigInt) -> bool {
+pub fn is_equal_mod(a: &BigInt, b: &BigInt, p: &BigInt) -> bool {
     let mut a_mod_p = a % p;
     let mut b_mod_p = b % p;
     if a_mod_p.is_negative() {
