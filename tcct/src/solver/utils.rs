@@ -346,13 +346,13 @@ pub fn evaluate_constraints(
         true
     } else {
         constraints.iter().all(|constraint| {
-            let mut used_variables = FxHashSet::default();
+
             let sv = evaluate_symbolic_value(
                 prime,
                 constraint,
                 assignment,
                 symbolic_library,
-                &mut used_variables,
+                
             );
             match sv {
                 SymbolicValue::ConstantBool(b) => b,
@@ -380,13 +380,12 @@ pub fn count_satisfied_constraints(
     constraints
         .iter()
         .filter(|constraint| {
-            let mut used_variables = FxHashSet::default();
             let sv = evaluate_symbolic_value(
                 prime,
                 constraint,
                 assignment,
                 symbolic_library,
-                &mut used_variables,
+                
             );
             match sv {
                 SymbolicValue::ConstantBool(b) => b,
@@ -394,6 +393,89 @@ pub fn count_satisfied_constraints(
             }
         })
         .count()
+}
+
+#[derive(Clone,PartialEq,Eq,Debug)]
+pub enum Direction {
+    Left,
+    Right
+}
+
+/// Gathers runtime mutable inputs from a symbolic execution trace.
+///
+/// This function analyzes a symbolic execution trace to identify inputs that are mutable during runtime.
+/// It inspects symbolic values to determine whether specific input variables are directly or indirectly
+/// influenced by runtime computations. The function returns a mapping of instruction indices to their
+/// associated mutation directions (`Left` or `Right`), indicating how the inputs are used in binary
+/// operations.
+///
+/// # Parameters
+/// - `trace`: A slice of symbolic values representing the execution trace to be analyzed. Each symbolic
+///   value corresponds to a step in the trace.
+/// - `symbolic_library`: A mutable reference to the symbolic library, which provides metadata (e.g., mappings
+///   for symbolic names) used for interpreting the trace.
+/// - `input_variables`: A set of symbolic names corresponding to the input variables that should be monitored
+///   for runtime mutability.
+///
+/// # Returns
+/// A map where:
+/// - The key is the index of an instruction in the `trace`.
+/// - The value is a `Direction` indicating whether the mutable input is on the left-hand side (`Left`) or
+///   right-hand side (`Right`) of a binary operation.
+pub fn gather_runtime_mutable_inputs(
+    trace: &[SymbolicValueRef],
+    symbolic_library: &mut SymbolicLibrary,
+    input_variables: &FxHashSet<SymbolicName>,
+) -> FxHashMap<usize, Direction> {
+    let mut used_variables= FxHashSet::default();
+    let mut result = FxHashMap::default();
+    for (i, inst) in trace.iter().enumerate() {
+        match inst.as_ref() {
+            SymbolicValue::ConstantBool(..) => {}
+            SymbolicValue::Assign(lhs, rhs, _)
+            | SymbolicValue::AssignEq(lhs, rhs)
+            | SymbolicValue::AssignCall(lhs, rhs, _) => {
+                if let SymbolicValue::Variable(_sym_name) = lhs.as_ref() {
+                    extract_variables_from_symbolic_value(&rhs, &mut used_variables);
+                } else {
+                    panic!(
+                        "Left hand of the assignment is not a variable: {}",
+                        inst.lookup_fmt(&symbolic_library.id2name)
+                    );
+                }
+            }
+            SymbolicValue::BinaryOp(lhs, op, rhs) => {
+                if let ExpressionInfixOpcode::Eq = op.0  {
+                    if let SymbolicValue::Variable(var_name) = &**lhs {
+                        if input_variables.contains(var_name) {
+                            extract_variables_from_symbolic_value(&rhs, &mut used_variables);
+                            if !used_variables.contains(var_name) {
+                                result.insert(i, Direction::Left);
+                            }
+                        }
+                    }else if let SymbolicValue::Variable(var_name) = &**rhs {
+                        if input_variables.contains(var_name) {
+                            extract_variables_from_symbolic_value(&lhs, &mut used_variables);
+                            if !used_variables.contains(var_name) {
+                                result.insert(i, Direction::Right);
+                            }
+                        }
+                    }
+                }
+
+                extract_variables_from_symbolic_value(&lhs, &mut used_variables);
+                extract_variables_from_symbolic_value(&rhs, &mut used_variables);
+            }
+            SymbolicValue::UnaryOp(_op, expr) => {
+                extract_variables_from_symbolic_value(&expr, &mut used_variables);
+            }
+            _ => panic!(
+                "A constraint should be one of `ConstantBool`, `Assign`, `AssignEq`, `AssignCall`, `BinaryOp` and `UnaryOp`. Found: {}",
+                inst.lookup_fmt(&symbolic_library.id2name)
+            ),
+        }
+    }
+    result
 }
 
 /// Simulates the execution of a symbolic trace, evaluating the values of symbolic variables.
@@ -406,6 +488,7 @@ pub fn count_satisfied_constraints(
 /// # Parameters
 /// - `prime`: A reference to the prime modulus used for modular arithmetic.
 /// - `trace`: A slice of references to symbolic values representing the symbolic trace to be simulated.
+/// - `runtime_mutable_positions`: A map of runtime mutable positions.
 /// - `assignment`: A mutable hash map of symbolic variable names to their corresponding `BigInt` values.
 /// - `symbolic_library`: A mutable reference to a symbolic library containing the definitions of symbolic values.
 ///
@@ -428,13 +511,13 @@ pub fn count_satisfied_constraints(
 pub fn emulate_symbolic_trace(
     prime: &BigInt,
     trace: &[SymbolicValueRef],
+    runtime_mutable_positions: &FxHashMap<usize, Direction>,
     assignment: &mut FxHashMap<SymbolicName, BigInt>,
     symbolic_library: &mut SymbolicLibrary,
 ) -> (bool, usize) {
     let mut success = true;
     let mut failure_pos = 0;
-    let input_variables: FxHashSet<SymbolicName> = assignment.keys().cloned().collect();
-    let mut used_variables = FxHashSet::default();
+    // let input_variables: FxHashSet<SymbolicName> = assignment.keys().cloned().collect();
     for (i, inst) in trace.iter().enumerate() {
         match inst.as_ref() {
             SymbolicValue::ConstantBool(b) => {
@@ -447,7 +530,7 @@ pub fn emulate_symbolic_trace(
             | SymbolicValue::AssignEq(lhs, rhs)
             | SymbolicValue::AssignCall(lhs, rhs, _) => {
                 if let SymbolicValue::Variable(sym_name) = lhs.as_ref() {
-                    let rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library, &mut used_variables);
+                    let rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
                     match &rhs_val {
                         SymbolicValue::ConstantInt(num) => {
                             assignment.insert(sym_name.clone(), num.clone());
@@ -471,38 +554,29 @@ pub fn emulate_symbolic_trace(
                 }
             }
             SymbolicValue::BinaryOp(lhs, op, rhs) => {
-                let is_left_unused = if let SymbolicValue::Variable(var_name) = &**lhs {
-                    !used_variables.contains(var_name) && input_variables.contains(var_name)
-                } else {
-                    false
-                };
-                let is_right_unused = if let SymbolicValue::Variable(var_name) = &**rhs {
-                    !used_variables.contains(var_name) && input_variables.contains(var_name)
-                } else {
-                    false
-                };
-
-                let mut lhs_val = evaluate_symbolic_value(prime, lhs, assignment, symbolic_library, &mut used_variables);
-                let mut rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library, &mut used_variables);
+                let mut lhs_val = evaluate_symbolic_value(prime, lhs, assignment, symbolic_library);
+                let mut rhs_val = evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
                 
-                /* 
-                if let ExpressionInfixOpcode::Eq = op.0 {
-                    if let SymbolicValue::Variable(var_name) = &**lhs {
-                        if is_left_unused {
-                            if let SymbolicValue::ConstantInt(ref num) = rhs_val {
-                                assignment.insert(var_name.clone(), num.clone());
-                                lhs_val = rhs_val.clone();
-                            }
+                if let Some(dir) = runtime_mutable_positions.get(&i) {
+                    match dir {
+                        Direction::Left => {
+                            if let SymbolicValue::Variable(var_name) = &**lhs {
+                                    if let SymbolicValue::ConstantInt(ref num) = rhs_val {
+                                        assignment.insert(var_name.clone(), num.clone());
+                                        lhs_val = rhs_val.clone();
+                                    }
+                                }
                         }
-                    } else if let SymbolicValue::Variable(var_name) = &**rhs {
-                        if is_right_unused {
-                            if let SymbolicValue::ConstantInt(ref num) = lhs_val {
-                                assignment.insert(var_name.clone(), num.clone());
-                                rhs_val = lhs_val.clone();
+                        Direction::Right => {
+                            if let SymbolicValue::Variable(var_name) = &**rhs {
+                                    if let SymbolicValue::ConstantInt(ref num) = lhs_val {
+                                        assignment.insert(var_name.clone(), num.clone());
+                                        rhs_val = lhs_val.clone();
+                                    }
                             }
                         }
                     }
-                }*/
+                }
 
                 let (normalized_lhs, normalized_rhs) = match &op.0 {
                     // Convert booleans to integers for arithmetic or bitwise operators
@@ -565,7 +639,7 @@ pub fn emulate_symbolic_trace(
                 }
             }
             SymbolicValue::UnaryOp(op, expr) => {
-                let expr_val = evaluate_symbolic_value(prime, expr, assignment, symbolic_library, &mut used_variables);
+                let expr_val = evaluate_symbolic_value(prime, expr, assignment, symbolic_library);
                 let flag = match &expr_val {
                     SymbolicValue::ConstantBool(rv) => match op.0 {
                         ExpressionPrefixOpcode::BoolNot => !rv,
@@ -606,7 +680,6 @@ pub fn emulate_symbolic_trace(
 /// - `value`: A reference to the symbolic value to evaluate. This can be a constant, variable, or a more complex expression.
 /// - `assignment`: A hash map containing the current assignment of symbolic variables to their resolved `BigInt` values.
 /// - `symbolic_library`: A mutable reference to the symbolic library that contains metadata about symbolic values and functions.
-/// - `used_variables`: A mutable reference to the set that keeps track of the used variables.
 ///
 /// # Returns
 /// - A `SymbolicValue` representing the evaluated result. This could be a resolved constant, a partially evaluated symbolic structure,
@@ -639,7 +712,6 @@ pub fn evaluate_symbolic_value(
     value: &SymbolicValue,
     assignment: &FxHashMap<SymbolicName, BigInt>,
     symbolic_library: &mut SymbolicLibrary,
-    used_variables: &mut FxHashSet<SymbolicName>,
 ) -> SymbolicValue {
     match value {
         SymbolicValue::ConstantBool(_b) => value.clone(),
@@ -651,7 +723,7 @@ pub fn evaluate_symbolic_value(
                     sym_name.lookup_fmt(&symbolic_library.id2name)
                 );
             }
-            used_variables.insert(sym_name.clone());
+            
             SymbolicValue::ConstantInt(assignment.get(sym_name).unwrap().clone())
         }
         SymbolicValue::Array(elements) => SymbolicValue::Array(
@@ -663,20 +735,20 @@ pub fn evaluate_symbolic_value(
                         e,
                         assignment,
                         symbolic_library,
-                        used_variables,
+                        
                     ))
                 })
                 .collect(),
         ),
         SymbolicValue::UniformArray(elem, counts) => {
             let evaled_elem =
-                evaluate_symbolic_value(prime, elem, assignment, symbolic_library, used_variables);
+                evaluate_symbolic_value(prime, elem, assignment, symbolic_library);
             let evaled_counts = evaluate_symbolic_value(
                 prime,
                 counts,
                 assignment,
                 symbolic_library,
-                used_variables,
+                
             );
             if let SymbolicValue::ConstantInt(c) = evaled_counts {
                 SymbolicValue::Array(vec![Rc::new(evaled_elem); c.to_usize().unwrap()])
@@ -688,9 +760,9 @@ pub fn evaluate_symbolic_value(
         | SymbolicValue::AssignEq(lhs, rhs)
         | SymbolicValue::AssignCall(lhs, rhs, _) => {
             let lhs_val =
-                evaluate_symbolic_value(prime, lhs, assignment, symbolic_library, used_variables);
+                evaluate_symbolic_value(prime, lhs, assignment, symbolic_library);
             let rhs_val =
-                evaluate_symbolic_value(prime, rhs, assignment, symbolic_library, used_variables);
+                evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
             match (&lhs_val, &rhs_val) {
                 (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => {
                     SymbolicValue::ConstantBool(lv % prime == rv % prime)
@@ -707,14 +779,14 @@ pub fn evaluate_symbolic_value(
         }
         SymbolicValue::BinaryOp(lhs, op, rhs) => {
             let lhs_val =
-                evaluate_symbolic_value(prime, lhs, assignment, symbolic_library, used_variables);
+                evaluate_symbolic_value(prime, lhs, assignment, symbolic_library);
             let rhs_val =
-                evaluate_symbolic_value(prime, rhs, assignment, symbolic_library, used_variables);
+                evaluate_symbolic_value(prime, rhs, assignment, symbolic_library);
             evaluate_binary_op(&lhs_val, &rhs_val, &prime, &op)
         }
         SymbolicValue::UnaryOp(op, expr) => {
             let expr_val =
-                evaluate_symbolic_value(prime, expr, assignment, symbolic_library, used_variables);
+                evaluate_symbolic_value(prime, expr, assignment, symbolic_library);
             match &expr_val {
                 SymbolicValue::ConstantInt(rv) => match op.0 {
                     ExpressionPrefixOpcode::Sub => SymbolicValue::ConstantInt(-1 * rv),
@@ -735,20 +807,20 @@ pub fn evaluate_symbolic_value(
         }
         SymbolicValue::Conditional(cond, then_branch, else_branch) => {
             let cond_val =
-                evaluate_symbolic_value(prime, cond, assignment, symbolic_library, used_variables);
+                evaluate_symbolic_value(prime, cond, assignment, symbolic_library);
             let then_val = evaluate_symbolic_value(
                 prime,
                 then_branch,
                 assignment,
                 symbolic_library,
-                used_variables,
+                
             );
             let else_val = evaluate_symbolic_value(
                 prime,
                 else_branch,
                 assignment,
                 symbolic_library,
-                used_variables,
+                
             );
             match &cond_val {
                 SymbolicValue::ConstantBool(true) => then_val,
@@ -793,7 +865,7 @@ pub fn evaluate_symbolic_value(
                         &args[i],
                         assignment,
                         subse.symbolic_library,
-                        used_variables,
+                        
                     )),
                 );
             }
@@ -878,7 +950,6 @@ pub fn evaluate_error_of_symbolic_value(
     assignment: &FxHashMap<SymbolicName, BigInt>,
     symbolic_library: &mut SymbolicLibrary,
 ) -> BigInt {
-    let mut used_variables = FxHashSet::default();
     match value {
         SymbolicValue::ConstantBool(b) => {
             if *b {
@@ -895,14 +966,14 @@ pub fn evaluate_error_of_symbolic_value(
                 lhs,
                 assignment,
                 symbolic_library,
-                &mut used_variables,
+                
             );
             let rhs_val = evaluate_symbolic_value(
                 prime,
                 rhs,
                 assignment,
                 symbolic_library,
-                &mut used_variables,
+                
             );
             match (&lhs_val, &rhs_val) {
                 (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => {
@@ -926,14 +997,14 @@ pub fn evaluate_error_of_symbolic_value(
                 lhs,
                 assignment,
                 symbolic_library,
-                &mut used_variables,
+                
             );
             let rhs_val = evaluate_symbolic_value(
                 prime,
                 rhs,
                 assignment,
                 symbolic_library,
-                &mut used_variables,
+                
             );
             match (&lhs_val, &rhs_val) {
                 (SymbolicValue::ConstantInt(lv), SymbolicValue::ConstantInt(rv)) => match &op.0 {

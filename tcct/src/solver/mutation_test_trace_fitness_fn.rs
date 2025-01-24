@@ -8,7 +8,7 @@ use crate::executor::symbolic_value::{SymbolicName, SymbolicValue, SymbolicValue
 use crate::solver::mutation_utils::apply_trace_mutation;
 use crate::solver::utils::{
     accumulate_error_of_constraints, emulate_symbolic_trace, evaluate_constraints, is_equal_mod,
-    BaseVerificationConfig, CounterExample, UnderConstrainedType, VerificationResult,
+    BaseVerificationConfig, CounterExample, Direction, UnderConstrainedType, VerificationResult,
 };
 
 /// Evaluates the fitness of a mutated symbolic execution trace by calculating the error score.
@@ -23,6 +23,7 @@ use crate::solver::utils::{
 /// - `base_config`: The base verification configuration, containing the prime modulus and other verification parameters.
 /// - `symbolic_trace`: A vector of references to symbolic values representing the trace to be evaluated.
 /// - `side_constraints`: A vector of references to symbolic values representing additional constraints for the evaluation.
+/// - `runtime_mutable_positions`: A map of runtime mutable positions.
 /// - `trace_mutation`: A mapping of indices to mutated symbolic values applied to the trace.
 /// - `inputs_assignment`: A vector of potential input assignments, where each assignment is a mapping of symbolic names to `BigInt` values.
 ///
@@ -51,6 +52,7 @@ pub fn evaluate_trace_fitness_by_error(
     base_config: &BaseVerificationConfig,
     symbolic_trace: &Vec<SymbolicValueRef>,
     side_constraints: &Vec<SymbolicValueRef>,
+    runtime_mutable_positions: &FxHashMap<usize, Direction>,
     trace_mutation: &FxHashMap<usize, SymbolicValue>,
     inputs_assignment: &Vec<FxHashMap<SymbolicName, BigInt>>,
 ) -> (usize, BigInt, Option<CounterExample>) {
@@ -70,6 +72,7 @@ pub fn evaluate_trace_fitness_by_error(
         let (is_original_program_success, original_program_failure_pos) = emulate_symbolic_trace(
             &base_config.prime,
             &symbolic_trace,
+            runtime_mutable_positions,
             &mut assignment_for_original,
             &mut sexe.symbolic_library,
         );
@@ -116,6 +119,7 @@ pub fn evaluate_trace_fitness_by_error(
         let (_is_mutated_program_success, _mutated_program_failure_pos) = emulate_symbolic_trace(
             &base_config.prime,
             &mutated_symbolic_trace,
+            runtime_mutable_positions,
             &mut assignment_for_mutation,
             &mut sexe.symbolic_library,
         );
