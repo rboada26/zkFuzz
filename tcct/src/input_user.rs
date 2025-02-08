@@ -447,7 +447,7 @@ mod input_processing {
     pub fn get_search_mode(matches: &ArgMatches) -> Result<String, ()> {
         match matches.is_present("search_mode") {
             true => Ok(String::from(matches.value_of("search_mode").unwrap())),
-            false => Ok(String::from("none"))
+            false => Ok(String::from("ga"))
         }
     }
 
@@ -613,7 +613,7 @@ mod input_processing {
                 Arg::with_name("search_mode")
                     .long("search_mode")
                     .takes_value(true)
-                    .default_value("none")
+                    .default_value("ga")
                     .display_order(320)
                     .help("(TCCT) Search mode to find the counter example that shows the given circuit is not well-constrained"),
             )
