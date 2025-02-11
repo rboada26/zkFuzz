@@ -16,8 +16,8 @@ use crate::executor::symbolic_value::{SymbolicName, SymbolicValue};
 
 use crate::solver::mutation_config::MutationConfig;
 use crate::solver::utils::{
-    extract_variables, gather_runtime_mutable_inputs, BaseVerificationConfig, CounterExample,
-    Direction,
+    extract_variables, gather_runtime_mutable_inputs, is_containing_binary_check,
+    BaseVerificationConfig, CounterExample, Direction,
 };
 
 pub struct MutationTestResult {
@@ -235,8 +235,26 @@ where
     );
 
     let mut binary_input_mode = false;
+    let mut partial_binary_mode = false;
+    let original_binary_mode_prob = mutation_config.binary_mode_prob;
+
+    if is_containing_binary_check(&symbolic_trace, mutation_config.binary_mode_search_level) {
+        info!("⚡ Binary check detected!");
+        partial_binary_mode = true;
+    }
 
     for generation in 0..mutation_config.max_generations {
+        if partial_binary_mode
+            && 1 < generation
+            && generation
+                < (mutation_config.max_generations as f64
+                    * mutation_config.binary_mode_partial_mode_round) as usize
+        {
+            mutation_config.binary_mode_prob = 1.0;
+        } else {
+            mutation_config.binary_mode_prob = original_binary_mode_prob;
+        }
+
         // Generate input population for this generation
         if generation % mutation_config.input_update_interval == 0 {
             update_input_fn(
