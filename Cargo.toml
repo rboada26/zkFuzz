@@ -1,0 +1,32 @@
+[package]
+name = "proofuzz"
+version = "2.2.1"
+edition = "2021"
+
+[dependencies]
+compiler = { git = "https://github.com/iden3/circom.git", package = "compiler" }
+type_analysis = { git = "https://github.com/iden3/circom.git", package = "type_analysis" }
+circom_algebra = { git = "https://github.com/iden3/circom.git", package = "circom_algebra" }
+constraint_list = { git = "https://github.com/iden3/circom.git", package = "constraint_list" }
+program_structure = { git = "https://github.com/iden3/circom.git", package = "program_structure" }
+constraint_generation = { git = "https://github.com/iden3/circom.git", package = "constraint_generation" }
+constraint_writers = { git = "https://github.com/iden3/circom.git", package = "constraint_writers" }
+constant_tracking = { git = "https://github.com/iden3/circom.git", package = "constant_tracking" }
+parser = { git = "https://github.com/iden3/circom.git", package = "parser" }
+code_producers= { git = "https://github.com/iden3/circom.git", package = "code_producers" }
+dag = { git = "https://github.com/iden3/circom.git", package = "dag" }
+clap = "2.33.0"
+ansi_term = "0.12.1"
+wast = "39.0.0"
+exitcode = "1.1.2"
+num-bigint-dig = { version = "0.6.0", features = ["rand"] }
+log = "0.4.22"
+env_logger = "0.11.5"
+colored = "2.1.0"
+num-traits = "0.2.15"
+rustc-hash = { version = "2.1" }
+rand = "0.7.0"
+serde = {version = "1.0.217", features = ["derive"]}
+serde_json = "1.0.134"
+lazy_static = "1.4.0"
+serde_with = "3.12.0"
