@@ -162,7 +162,7 @@ impl<'a> SymbolicExecutor<'a> {
             let simplified_a =
                 self.simplify_variables(&evaled_a, usize::MAX, true, false, &mut memo);
             let sym_name = SymbolicName::new(name2id[n], self.cur_state.owner_name.clone(), None);
-            let cond = SymbolicValue::AssignEq(
+            let cond = SymbolicValue::AssignTemplParam(
                 Rc::new(SymbolicValue::Variable(sym_name.clone())),
                 Rc::new(simplified_a.clone()),
             );
@@ -484,7 +484,8 @@ impl<'a> SymbolicExecutor<'a> {
                     }
                 }
             }
-            SymbolicValue::BinaryOp(lv, infix_op, rv) => {
+            SymbolicValue::BinaryOp(lv, infix_op, rv)
+            | SymbolicValue::AuxBinaryOp(lv, infix_op, rv) => {
                 let lhs = self.simplify_variables(
                     lv,
                     elem_id,

@@ -272,7 +272,7 @@ fn test_lessthan() {
             lessthan_out.clone(),
         )),
         DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
-        Rc::new(SymbolicValue::BinaryOp(
+        Rc::new(SymbolicValue::AuxBinaryOp(
             in_0.clone(),
             DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::Lesser),
             in_1.clone(),
@@ -285,7 +285,7 @@ fn test_lessthan() {
             lessthan_out.clone(),
         )),
         DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::BoolAnd),
-        Rc::new(SymbolicValue::BinaryOp(
+        Rc::new(SymbolicValue::AuxBinaryOp(
             in_0,
             DebuggableExpressionInfixOpcode(ExpressionInfixOpcode::GreaterEq),
             in_1,
@@ -2016,7 +2016,7 @@ fn test_one_line_call() {
     )));
 
     let ground_truth_constraints = vec![
-        SymbolicValue::AssignEq(
+        SymbolicValue::AssignTemplParam(
             main_n.clone(),
             Rc::new(SymbolicValue::ConstantInt(BigInt::from_str("2").unwrap())),
         ),

@@ -43,15 +43,21 @@ impl ConstraintStatistics {
             SymbolicValue::Variable(sym_name) => {
                 *self.variable_counts.entry(sym_name.clone()).or_insert(0) += 1;
             }
-            SymbolicValue::Assign(lhs, rhs, _, _) => {
+            SymbolicValue::Assign(lhs, rhs, _, zero_div_info) => {
                 *self
                     .operator_counts
                     .entry("Assign".to_string())
                     .or_insert(0) += 1;
+                if zero_div_info.is_some() {
+                    *self
+                        .operator_counts
+                        .entry("QuadZeroDiv".to_string())
+                        .or_insert(0) += 1;
+                }
                 self.update_from_symbolic_value(lhs, depth + 1);
                 self.update_from_symbolic_value(rhs, depth + 1);
             }
-            SymbolicValue::AssignEq(lhs, rhs) => {
+            SymbolicValue::AssignEq(lhs, rhs) | SymbolicValue::AssignTemplParam(lhs, rhs) => {
                 *self
                     .operator_counts
                     .entry("AssignEq".to_string())
@@ -68,6 +74,12 @@ impl ConstraintStatistics {
                 self.update_from_symbolic_value(rhs, depth + 1);
             }
             SymbolicValue::BinaryOp(lhs, op, rhs) => {
+                let op_name = format!("{:?}", op);
+                *self.operator_counts.entry(op_name).or_insert(0) += 1;
+                self.update_from_symbolic_value(lhs, depth + 1);
+                self.update_from_symbolic_value(rhs, depth + 1);
+            }
+            SymbolicValue::AuxBinaryOp(lhs, op, rhs) => {
                 let op_name = format!("{:?}", op);
                 *self.operator_counts.entry(op_name).or_insert(0) += 1;
                 self.update_from_symbolic_value(lhs, depth + 1);
@@ -146,6 +158,18 @@ pub fn print_constraint_summary_statistics_pretty(stats: &ConstraintStatistics) 
         stats.constraint_depths.iter().max().unwrap_or(&0)
     );
 
+    println!("\n🔢 Assign Counts:");
+    for op in &["Assign", "AssignEq", "AssignCall", "QuadZeroDiv"] {
+        let c = stats.operator_counts.get(*op).unwrap_or(&0);
+        println!(
+            " • {:<13}: {}{}{}",
+            op,
+            if *c != 0 { WHITE } else { BBLACK },
+            c,
+            RESET
+        );
+    }
+
     println!("\n🔢 Operator Counts:");
     for op in &[
         "Mul", "Div", "Add", "Sub", "Pow", "IntDiv", "Mod", "ShL", "ShR", "LEq", "GEq", "Lt", "Gt",
@@ -213,8 +237,30 @@ pub fn print_constraint_summary_statistics_csv(constraint_stats: &ConstraintStat
     );
 
     for op in &[
-        "Mul", "Div", "Add", "Sub", "Pow", "IntDiv", "Mod", "ShL", "ShR", "LEq", "GEq", "Lt", "Gt",
-        "Eq", "NEq", "BoolOr", "BoolAnd", "BitOr", "BitAnd", "BitXor",
+        "Assign",
+        "AssignEq",
+        "AssignCall",
+        "QuadZeroDiv",
+        "Mul",
+        "Div",
+        "Add",
+        "Sub",
+        "Pow",
+        "IntDiv",
+        "Mod",
+        "ShL",
+        "ShR",
+        "LEq",
+        "GEq",
+        "Lt",
+        "Gt",
+        "Eq",
+        "NEq",
+        "BoolOr",
+        "BoolAnd",
+        "BitOr",
+        "BitAnd",
+        "BitXor",
     ] {
         values.push(
             constraint_stats
