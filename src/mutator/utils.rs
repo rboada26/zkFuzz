@@ -954,17 +954,18 @@ pub fn evaluate_symbolic_value(
                     subse.cur_state.owner_name.clone(),
                     None,
                 );
+                let evaled_arg = evaluate_symbolic_value(
+                    prime,
+                    &args[i],
+                    assignment,
+                    subse.symbolic_library,
+                );
+                if evaled_arg.is_none() {
+                    return None;
+                }
                 subse.cur_state.set_rc_sym_val(
                     sym_name,
-                    Rc::new(
-                        evaluate_symbolic_value(
-                            prime,
-                            &args[i],
-                            assignment,
-                            subse.symbolic_library,
-                        )
-                        .unwrap(),
-                    ),
+                    Rc::new(evaled_arg.unwrap()),
                 );
             }
             subse.execute(&func.body.clone(), 0);
@@ -973,6 +974,9 @@ pub fn evaluate_symbolic_value(
             } else {
                 let return_name =
                     SymbolicName::new(usize::MAX, subse.cur_state.owner_name.clone(), None);
+                if !subse.cur_state.symbol_binding_map.contains_key(&return_name) {
+                    return None;
+                }
                 let return_value =
                     (*subse.cur_state.symbol_binding_map[&return_name].clone()).clone();
                 if let SymbolicValue::ConstantInt(_) = &return_value {
