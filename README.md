@@ -1,5 +1,7 @@
 # ProoFuzz
 
+**ProoFuzz** is a ZKP circuit fuzzer designed to help you identify vulnerabilities in zero-knowledge proof circuits. It leverages mutation testing to uncover counterexamples that reveal under-constrained or over-constrained behavior in your circuits.
+
 ## Build
 
 To compile the tool, run:
@@ -9,6 +11,8 @@ cargo build --release
 ```
 
 ## Basic Usage
+
+ProoFuzz’s CLI provides numerous options to tailor your fuzzing session. Below is a summary of the available commands and flags:
 
 ```
 ZKP Circuit Fuzzer
@@ -51,9 +55,13 @@ ARGS:
 
 **Example Command:**
 
+Run ProoFuzz using your circuit file written in Circom:
+
 ```bash
+# Using the debug build:
 ./target/debug/proofuzz ./tests/sample/iszero_vuln.circom --search_mode="ga"
-or
+
+# Using the release build:
 ./target/release/proofuzz ./tests/sample/iszero_vuln.circom --search_mode="ga"
 ```
 
@@ -187,12 +195,28 @@ If the configuration json file ommites some keys, the default values are used fo
     - Purpose: Probabilities associated with random value ranges.
     - Default: `[0.5, 0.5]`
 
+- binary_mode_prob (f64)
+    - Purpose: Probability of restricting random input to only 0 or 1.
+    - Default: `0.0`
+
+- binary_mode_search_level (usize)
+    - Purpose: Search depth for the binary pattern (x * (1 - x) === 0) check.
+    - Default: 1
+
+- binary_mode_warmup_round (f64)
+    - Purpose: Ratio of warmup rounds where binary_mode_prob is temporarily set to 1 upon detecting the binary pattern.
+    - Default: 0.1
+
+- zero_div_attempt_prob (f64)
+    - Purpose: Probability of invoking the quadratic equation solver to analytically determine solutions for zero-division patterns.
+    - Default: 0.2
+
 - save_fitness_scores (bool)
     - Purpose: Flag to determine if fitness scores should be saved.
     - Default: `false`
 ```
 
-## Tips
+## Tips & Advanced Features
 
 ### Saving Output
 
@@ -272,7 +296,7 @@ The output filename will follow the pattern `<TARGET_FILE_NAME>_<RANDOM_SUFFIX>_
 
 ### Logging
 
-This tool also provides multiple verbosity levels for detailed analysis with the environmental variable `RUST_LOG`:
+ProoFuzz offers multiple verbosity levels for detailed analysis with the environmental variable `RUST_LOG`:
 
 - `warn`: Outputs warnings and errors.
 - `info`: Includes everything from `warn` and adds the basic statistics about the trace and constraints.
