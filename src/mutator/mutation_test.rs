@@ -129,6 +129,7 @@ where
         &mut SymbolicExecutor,
         &[SymbolicName],
         &mut Vec<FxHashMap<SymbolicName, BigInt>>,
+        &Vec<BigInt>,
         &BaseVerificationConfig,
         &MutationConfig,
         &mut StdRng,
@@ -141,6 +142,7 @@ where
         &FxHashMap<usize, Direction>,
         &Gene,
         &Vec<FxHashMap<SymbolicName, BigInt>>,
+        &mut Vec<BigInt>,
     ) -> (usize, BigInt, Option<CounterExample>, usize),
     TraceEvolutionFn: Fn(
         &[usize],
@@ -228,7 +230,9 @@ where
         &mut rng,
     );
     let mut fitness_scores =
-        vec![-base_config.prime.clone(); mutation_config.input_population_size];
+        vec![-base_config.prime.clone(); mutation_config.program_population_size];
+    let mut fitness_scores_inputs =
+        vec![-base_config.prime.clone(); mutation_config.program_population_size];
     let mut input_population = Vec::new();
     let mut fitness_score_log = if mutation_config.save_fitness_scores {
         Vec::with_capacity(mutation_config.max_generations)
@@ -272,6 +276,7 @@ where
                 sexe,
                 &input_variables,
                 &mut input_population,
+                &fitness_scores_inputs,
                 &base_config,
                 &mutation_config,
                 &mut rng,
@@ -327,6 +332,7 @@ where
                 },
                 individual,
                 &input_population,
+                &mut fitness_scores_inputs,
             );
             if fitness.1.is_zero() {
                 evaluations.push(fitness);
