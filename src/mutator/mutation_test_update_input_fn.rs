@@ -1,5 +1,4 @@
 use num_bigint_dig::BigInt;
-use rand::prelude::IteratorRandom;
 use rand::rngs::StdRng;
 use rand::Rng;
 use rustc_hash::FxHashMap;
@@ -88,9 +87,16 @@ pub fn update_input_population_with_fitness_score(
             } else {
                 parent1.clone()
             };
-            for (_, val) in child.iter_mut() {
+            let mut keys: Vec<_> = child.keys().cloned().collect();
+            keys.sort();
+            for k in keys.iter() {
+                //let val = child.get(k).unwrap();
                 if rng.gen::<f64>() < mutation_config.mutation_rate {
-                    *val = draw_bigint_with_probabilities(&mutation_config, rng).unwrap();
+                    //*val = draw_bigint_with_probabilities(&mutation_config, rng).unwrap();
+                    child.insert(
+                        k.clone().clone(),
+                        draw_bigint_with_probabilities(&mutation_config, rng).unwrap(),
+                    );
                 }
             }
             child
