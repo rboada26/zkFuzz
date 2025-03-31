@@ -203,6 +203,7 @@ pub type QuadraticPoly = (SymbolicName, [SymbolicValueRef; 3]);
 /// conditional, arrays, tuples, uniform arrays, and function calls.
 #[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum SymbolicValue {
+    NOP,
     ConstantInt(BigInt),
     ConstantBool(bool),
     Variable(SymbolicName),
@@ -244,6 +245,7 @@ impl SymbolicValue {
     /// A String representation of the symbolic value.
     pub fn lookup_fmt(&self, lookup: &FxHashMap<usize, String>) -> String {
         match self {
+            SymbolicValue::NOP => "NOP".to_string(),
             SymbolicValue::ConstantInt(value) => format!("{}", value),
             SymbolicValue::ConstantBool(flag) => {
                 format!(
