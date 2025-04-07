@@ -1,6 +1,8 @@
 # zkFuzz
 
-**zkFuzz** is a ZKP circuit fuzzer designed to help you identify vulnerabilities in zero-knowledge proof circuits. It leverages mutation testing to uncover counterexamples that reveal under-constrained or over-constrained behavior in your circuits.
+![Fuzzing Powered](https://img.shields.io/badge/Fuzzing-powered--by--program--mutation-blue)
+
+**zkFuzz** is a ZK circuit fuzzer designed to help you identify vulnerabilities in zero-knowledge proof circuits. It leverages mutation testing to uncover counterexamples that reveal under-constrained or over-constrained behavior in your circuits.
 
 ## Build
 
@@ -15,7 +17,7 @@ cargo build --release
 zkFuzz’s CLI provides numerous options to tailor your fuzzing session. Below is a summary of the available commands and flags:
 
 ```
-ZKP Circuit Fuzzer
+ZK Circuit Fuzzer
 
 USAGE:
     zkfuzz [FLAGS] [OPTIONS] [--] [input]
