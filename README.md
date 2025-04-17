@@ -1,19 +1,39 @@
 # zkFuzz
 
+> [!IMPORTANT]
+> This tool is under active development. Usage patterns and features may change over time.
+
+<p align="center">
+  <a href="https://risczero.com" target="_blank">
+    <picture>
+      <img src="./img/zkfuzz-logo.png" alt="zkFuzz Logo" height="126">
+    </picture>
+  </a>
+</p>
+
 ![example workflow](https://github.com/Koukyosyumei/zkFuzz/actions/workflows/test.yaml/badge.svg)
-![Fuzzing Powered](https://img.shields.io/badge/Fuzzing-powered--by--program--mutation-blue)
+![GPL-3.0](https://img.shields.io/github/license/Koukyosyumei/zkFuzz?color=blue)
+![Fuzzing Powered](https://img.shields.io/badge/Fuzzing-powered--by--program--mutation-orange)
 
-**zkFuzz** is a ZK circuit fuzzer designed to help you identify vulnerabilities in zero-knowledge proof circuits. It leverages fuzzing with program mutation to uncover counterexamples that reveal under-constrained or over-constrained behavior in your circuits.
+**zkFuzz** is a ZK circuit fuzzer designed to help you identify vulnerabilities in [zero-knowledge proof](https://en.wikipedia.org/wiki/Non-interactive_zero-knowledge_proof) circuits. It leverages fuzzing with program mutation to uncover counterexamples that reveal under-constrained or over-constrained behavior in your circuits. zkFuzz currently supports [Circom](https://docs.circom.io/), with support for additional languages coming soon.
 
-## Build
+## 🚀 Install
 
-To compile the tool, run:
+**Option 1: Install via Cargo**
 
 ```bash
+cargo install --git https://github.com/Koukyosyumei/zkFuzz
+```
+
+**Option 2: Build from Source**
+
+```bash
+git clone https://github.com/Koukyosyumei/zkFuzz.git
+cd zkFuzz
 cargo build --release
 ```
 
-## Basic Usage
+## 🧰 Basic Usage
 
 zkFuzz’s CLI provides numerous options to tailor your fuzzing session. Below is a summary of the available commands and flags:
 
@@ -72,7 +92,7 @@ Run zkFuzz using your circuit file written in Circom:
 
 <img src="img/main_result.png" alt="Result" width=700>
 
-## Mutation Testing
+## 🔬 Fuzzing with Program Mutation
 
 Fuzzing with program mutation mode (`ga` mode) suppots a detailed configuration through the `path_to_mutation_setting` option. The configuration is specified as a JSON file.
 
@@ -118,7 +138,8 @@ Here is an example of the JSON configuration schema:
 
 If the configuration JSON file omits some keys, the default values are used for those omitted keys.
 
-### Field Descriptions
+<details>
+<summary><strong>Field Descriptions – Click to view all configuration options</strong></summary>
 
 ```yaml
 - seed (u64)
@@ -238,9 +259,11 @@ If the configuration JSON file omits some keys, the default values are used for 
   - Default: false
 ```
 
-## Tips & Advanced Features
+</details>
 
-### Saving Output
+## 💡 Tips & Advanced Features
+
+### 💾 Saving Output
 
 When the `--save_output` option is enabled, the counterexample is saved to the directory when found.
 
@@ -316,7 +339,7 @@ The output filename will follow the pattern `<TARGET_FILE_NAME>_<RANDOM_SUFFIX>_
 }
 ```
 
-### Logging
+### 🧪 Logging
 
 zkFuzz offers multiple verbosity levels for detailed analysis with the environmental variable `RUST_LOG`:
 
@@ -339,7 +362,7 @@ RUST_LOG=trace ./target/debug/zkfuzz ../sample/lessthan3.circom --print_ast --pr
   <img src="img/result.png" alt="Summary Reports" style="width: 20%;">
 </div>
 
-## Trophies
+## 🏆 Trophies
 
 Here are some of the most notable security vulnerabilities uncovered using zkfuzz.
 If you’ve discovered a significant issue with our tool, we’d love to hear about it—please submit a pull request with the relevant details!
@@ -349,7 +372,7 @@ If you’ve discovered a significant issue with our tool, we’d love to hear ab
 - https://github.com/zkemail/zk-regex/pull/83
 - https://github.com/rarimo/passport-zk-circuits/pull/60
 
-## Cite
+## 📃 Cite
 
 ```
 @misc{takahashi2025zkfuzzfoundationframeworkeffective,
