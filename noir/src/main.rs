@@ -1,6 +1,7 @@
 use clap::{command, Parser};
 use color_eyre::eyre;
 use const_format::formatcp;
+use rand::Rng;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 use bn254_blackbox_solver::Bn254BlackBoxSolver;
@@ -51,7 +52,11 @@ fn execute(circuit: &CompiledProgram, args: &ExecuteCommand) -> Result<Execution
     )
 }
 
-pub fn nfuzz_run(args: ExecuteCommand) -> Result<(), CliError> {
+pub fn zkfuzz_run(
+    args: ExecuteCommand,
+    num_generation: usize,
+    rng: &mut StdRng,
+) -> Result<(), CliError> {
     let artifact = Artifact::read_from_file(&args.artifact_path)?;
     let artifact_name = args
         .artifact_path
@@ -73,48 +78,51 @@ pub fn nfuzz_run(args: ExecuteCommand) -> Result<(), CliError> {
         };
 
         let original_unconstrained_functions = circuit.program.unconstrained_functions.clone();
-        let mut mutated_unconstrained_functions = original_unconstrained_functions.clone();
 
-        let func_idx: usize = 0;
-        let instr_pos: usize = 23;
+        for i in 0..num_generation {
+            let mut mutated_unconstrained_functions = original_unconstrained_functions.clone();
 
-        match mutated_unconstrained_functions[func_idx].bytecode[instr_pos] {
-            BrilligOpcode::BinaryFieldOp {
-                destination,
-                op: _,
-                lhs,
-                rhs: _,
-            } => {
-                mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
-                    BrilligOpcode::BinaryFieldOp {
-                        destination,
-                        op: BinaryFieldOp::Sub,
-                        lhs: lhs.clone(),
-                        rhs: lhs.clone(),
-                    };
-            }
-            _ => {}
-        }
+            let func_idx: usize = rng.gen_range(0..original_unconstrained_functions.len());
+            let instr_pos: usize =
+                rng.gen_range(0..original_unconstrained_functions[func_idx].len());
 
-        circuit.program.unconstrained_functions = mutated_unconstrained_functions;
-
-        let mutated_result = match execute(&circuit, &args) {
-            Ok(results) => results.return_values.actual_return,
-            Err(e) => {
-                if let CliError::CircuitExecutionError(ref err) = e {
-                    execution::show_diagnostic(&circuit, err);
+            match mutated_unconstrained_functions[func_idx].bytecode[instr_pos] {
+                BrilligOpcode::BinaryFieldOp {
+                    destination,
+                    op: _,
+                    lhs,
+                    rhs: _,
+                } => {
+                    mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
+                        BrilligOpcode::BinaryFieldOp {
+                            destination,
+                            op: BinaryFieldOp::Sub,
+                            lhs: lhs.clone(),
+                            rhs: lhs.clone(),
+                        };
                 }
-                None
+                _ => {}
             }
-        };
+            circuit.program.unconstrained_functions = mutated_unconstrained_functions;
 
-        match (original_result, mutated_result) {
-            (Some(v), Some(u)) => {
-                if v != u {
-                    println!("under-constrained");
+            let mutated_result = match execute(&circuit, &args) {
+                Ok(results) => results.return_values.actual_return,
+                Err(e) => {
+                    if let CliError::CircuitExecutionError(ref err) = e {
+                        execution::show_diagnostic(&circuit, err);
+                    }
+                    None
                 }
+            };
+
+            match (original_result, mutated_result) {
+                (Some(v), Some(u)) => {
+                    if v != u {
+                        println!("under-constrained");
+                    }
+                }
+                (_, _) => {}
             }
-            (_, _) => {}
         }
     }
 
@@ -130,7 +138,7 @@ struct AExecutorCli {
 
 pub fn start_cli() -> eyre::Result<()> {
     let AExecutorCli { command } = AExecutorCli::parse();
-    nfuzz_run(command);
+    zkfuzz_run(command);
 
     Ok(())
 }
