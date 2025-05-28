@@ -32,7 +32,7 @@ use noirc_driver::CompiledProgram;
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 static VERSION_STRING: &str = formatcp!("version = {}\n", PKG_VERSION,);
 
-/// Execute a circuit and return the output witnesses.
+/// Executes the given compiled circuit with specified inputs and solvers, returning output witnesses.
 pub fn run_circuit_and_get_witnesses<B, E>(
     circuit: &CompiledProgram,
     blackbox_solver: &B,
@@ -69,7 +69,7 @@ where
     })
 }
 
-/// Execute a circuit and return the output witnesses.
+/// Executes the circuit with potentially replayed oracle transcript and returns the results.
 fn execute(
     circuit: &CompiledProgram,
     args: &ExecuteCommand,
@@ -105,6 +105,17 @@ fn execute(
     )
 }
 
+/// Fuzzes a Noir program by mutating inputs and unconstrained functions, detecting under-constrained bugs.
+///
+/// Compares return values between original and mutated programs to identify behavioral divergence.
+///
+/// # Arguments
+/// * `args` - Command-line execution arguments.
+/// * `num_generation` - Number of fuzzing iterations to run.
+/// * `rng` - Mutable random number generator seeded externally.
+///
+/// # Returns
+/// Returns `Ok(())` if successful or reports early when a mismatch is found.
 pub fn zkfuzz_run(
     args: ExecuteCommand,
     num_generation: usize,
