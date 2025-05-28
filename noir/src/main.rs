@@ -1,5 +1,7 @@
 use std::io;
 use std::io::Write;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 
 use clap::{command, Parser};
 use color_eyre::eyre;
@@ -9,26 +11,23 @@ use rand::{Rng, SeedableRng};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 use acir::{native_types::WitnessStack, FieldElement};
+use acvm::BlackBoxFunctionSolver;
 use bn254_blackbox_solver::Bn254BlackBoxSolver;
 use brillig::BinaryFieldOp;
 use brillig::Opcode as BrilligOpcode;
 use nargo::foreign_calls::{
     layers, transcript::ReplayForeignCallExecutor, DefaultForeignCallBuilder,
 };
+use nargo::{foreign_calls::ForeignCallExecutor, NargoError};
 use noir_artifact_cli::commands::execute_cmd;
 use noir_artifact_cli::commands::execute_cmd::ExecuteCommand;
 use noir_artifact_cli::execution;
 use noir_artifact_cli::execution::{ExecutionResults, ReturnValues};
+use noir_artifact_cli::fs::{inputs::read_inputs_from_file, witness::save_witness_to_dir};
 use noir_artifact_cli::{errors::CliError, Artifact};
 use noirc_abi::input_parser::InputValue;
 use noirc_abi::InputMap;
 use noirc_driver::CompiledProgram;
-
-use std::path::Path;
-
-use acvm::BlackBoxFunctionSolver;
-use nargo::{foreign_calls::ForeignCallExecutor, NargoError};
-use noir_artifact_cli::fs::{inputs::read_inputs_from_file, witness::save_witness_to_dir};
 
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 static VERSION_STRING: &str = formatcp!("version = {}\n", PKG_VERSION,);
@@ -178,13 +177,20 @@ pub fn zkfuzz_run(
             circuit.program.unconstrained_functions = mutated_unconstrained_functions;
 
             // ----------- Executing the mutated circuit -------------------- //
-
-            let mutated_result = match execute(&circuit, &args, &mutated_input_map, None) {
-                Ok(results) => results.return_values.actual_return,
-                Err(e) => {
+            let raw_mutated_result = catch_unwind(AssertUnwindSafe(|| {
+                execute(&circuit, &args, &mutated_input_map, None)
+            }));
+            let mutated_result = match raw_mutated_result {
+                Ok(Ok(results)) => results.return_values.actual_return,
+                Ok(Err(e)) => {
+                    /*
                     if let CliError::CircuitExecutionError(ref err) = e {
                         execution::show_diagnostic(&circuit, err);
-                    }
+                    }*/
+                    None
+                }
+                Err(e) => {
+                    eprintln!("{e:?}");
                     None
                 }
             };
