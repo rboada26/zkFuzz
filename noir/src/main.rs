@@ -119,10 +119,13 @@ pub fn zkfuzz_run(
 
     if let Artifact::Program(program) = artifact {
         let mut circuit: CompiledProgram = program.into();
+
         let (initial_input_map, _initial_expected_return) =
             read_inputs_from_file(&args.prover_file, &circuit.abi)?;
         let mut input_map_keys: Vec<_> = initial_input_map.keys().collect();
         input_map_keys.sort();
+
+        let original_unconstrained_functions = circuit.program.unconstrained_functions.clone();
 
         for i in 0..num_generation {
             print!("\r\x1b[2K🧬 Generation: {}/{}", i, num_generation);
@@ -138,6 +141,7 @@ pub fn zkfuzz_run(
             }
 
             // ------------ Executing the original circuit ------------------ //
+            circuit.program.unconstrained_functions = original_unconstrained_functions.clone();
             let original_result = match execute(&circuit, &args, &mutated_input_map, None) {
                 Ok(results) => results.return_values.actual_return,
                 Err(e) => {
@@ -147,7 +151,6 @@ pub fn zkfuzz_run(
                     None
                 }
             };
-            let original_unconstrained_functions = circuit.program.unconstrained_functions.clone();
 
             // ------------ Mutating unconstrained functions ---------------- //
 
@@ -183,10 +186,9 @@ pub fn zkfuzz_run(
             let mutated_result = match raw_mutated_result {
                 Ok(Ok(results)) => results.return_values.actual_return,
                 Ok(Err(e)) => {
-                    /*
                     if let CliError::CircuitExecutionError(ref err) = e {
                         execution::show_diagnostic(&circuit, err);
-                    }*/
+                    }
                     None
                 }
                 Err(e) => {
@@ -210,6 +212,7 @@ pub fn zkfuzz_run(
             }
         }
     }
+    println!("\nDone");
 
     Ok(())
 }
