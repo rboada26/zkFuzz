@@ -1,7 +1,11 @@
+use std::io;
+use std::io::Write;
+
 use clap::{command, Parser};
 use color_eyre::eyre;
 use const_format::formatcp;
-use rand::Rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 use bn254_blackbox_solver::Bn254BlackBoxSolver;
@@ -80,11 +84,13 @@ pub fn zkfuzz_run(
         let original_unconstrained_functions = circuit.program.unconstrained_functions.clone();
 
         for i in 0..num_generation {
+            print!("\r\x1b[2K🧬 Generation: {}/{}", i, num_generation);
+
             let mut mutated_unconstrained_functions = original_unconstrained_functions.clone();
 
             let func_idx: usize = rng.gen_range(0..original_unconstrained_functions.len());
             let instr_pos: usize =
-                rng.gen_range(0..original_unconstrained_functions[func_idx].len());
+                rng.gen_range(0..original_unconstrained_functions[func_idx].bytecode.len());
 
             match mutated_unconstrained_functions[func_idx].bytecode[instr_pos] {
                 BrilligOpcode::BinaryFieldOp {
@@ -115,10 +121,15 @@ pub fn zkfuzz_run(
                 }
             };
 
-            match (original_result, mutated_result) {
+            match (&original_result, &mutated_result) {
                 (Some(v), Some(u)) => {
                     if v != u {
-                        println!("under-constrained");
+                        print!("\r\x1b[2K🧬 Generation: {}/{}", i, num_generation);
+                        io::stdout().flush().unwrap();
+                        println!("  Under-Constrained");
+                        println!("      Original Return Value: {:?}", v);
+                        println!("       Mutated Return Value: {:?}", u);
+                        return Ok(());
                     }
                 }
                 (_, _) => {}
@@ -138,7 +149,8 @@ struct AExecutorCli {
 
 pub fn start_cli() -> eyre::Result<()> {
     let AExecutorCli { command } = AExecutorCli::parse();
-    zkfuzz_run(command);
+    let mut rng = StdRng::seed_from_u64(42);
+    zkfuzz_run(command, 1000, &mut rng);
 
     Ok(())
 }
