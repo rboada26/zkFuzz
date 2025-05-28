@@ -8,6 +8,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
+use acir::{native_types::WitnessStack, FieldElement};
 use bn254_blackbox_solver::Bn254BlackBoxSolver;
 use brillig::BinaryFieldOp;
 use brillig::Opcode as BrilligOpcode;
@@ -16,18 +17,66 @@ use nargo::foreign_calls::{
 };
 use noir_artifact_cli::commands::execute_cmd;
 use noir_artifact_cli::commands::execute_cmd::ExecuteCommand;
-use noir_artifact_cli::{
-    errors::CliError,
-    execution::{self, ExecutionResults},
-    Artifact,
-};
+use noir_artifact_cli::execution;
+use noir_artifact_cli::execution::{ExecutionResults, ReturnValues};
+use noir_artifact_cli::{errors::CliError, Artifact};
+use noirc_abi::input_parser::InputValue;
+use noirc_abi::InputMap;
 use noirc_driver::CompiledProgram;
+
+use std::path::Path;
+
+use acvm::BlackBoxFunctionSolver;
+use nargo::{foreign_calls::ForeignCallExecutor, NargoError};
+use noir_artifact_cli::fs::{inputs::read_inputs_from_file, witness::save_witness_to_dir};
 
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 static VERSION_STRING: &str = formatcp!("version = {}\n", PKG_VERSION,);
 
 /// Execute a circuit and return the output witnesses.
-fn execute(circuit: &CompiledProgram, args: &ExecuteCommand) -> Result<ExecutionResults, CliError> {
+pub fn run_circuit_and_get_witnesses<B, E>(
+    circuit: &CompiledProgram,
+    blackbox_solver: &B,
+    foreign_call_executor: &mut E,
+    input_map: &InputMap,
+    expected_return: Option<InputValue>,
+) -> Result<ExecutionResults, CliError>
+where
+    B: BlackBoxFunctionSolver<FieldElement>,
+    E: ForeignCallExecutor<FieldElement>,
+{
+    let initial_witness = circuit.abi.encode(&input_map, None)?;
+
+    let witness_stack = nargo::ops::execute_program(
+        &circuit.program,
+        initial_witness,
+        blackbox_solver,
+        foreign_call_executor,
+    )?;
+
+    let main_witness = &witness_stack
+        .peek()
+        .expect("Should have at least one witness on the stack")
+        .witness;
+
+    let (_, actual_return) = circuit.abi.decode(main_witness)?;
+
+    Ok(ExecutionResults {
+        witness_stack,
+        return_values: ReturnValues {
+            actual_return,
+            expected_return,
+        },
+    })
+}
+
+/// Execute a circuit and return the output witnesses.
+fn execute(
+    circuit: &CompiledProgram,
+    args: &ExecuteCommand,
+    input_map: &InputMap,
+    expected_return: Option<InputValue>,
+) -> Result<ExecutionResults, CliError> {
     // Build a custom foreign call executor that replays the Oracle transcript,
     // and use it as a base for the default executor. Using it as the innermost rather
     // than top layer so that any extra `print` added for debugging is handled by the
@@ -48,11 +97,12 @@ fn execute(circuit: &CompiledProgram, args: &ExecuteCommand) -> Result<Execution
 
     let blackbox_solver = Bn254BlackBoxSolver(args.pedantic_solving);
 
-    execution::execute(
+    run_circuit_and_get_witnesses(
         circuit,
         &blackbox_solver,
         &mut foreign_call_executor,
-        &args.prover_file,
+        input_map,
+        expected_return,
     )
 }
 
@@ -70,21 +120,37 @@ pub fn zkfuzz_run(
 
     if let Artifact::Program(program) = artifact {
         let mut circuit: CompiledProgram = program.into();
-
-        let original_result = match execute(&circuit, &args) {
-            Ok(results) => results.return_values.actual_return,
-            Err(e) => {
-                if let CliError::CircuitExecutionError(ref err) = e {
-                    execution::show_diagnostic(&circuit, err);
-                }
-                None
-            }
-        };
-
-        let original_unconstrained_functions = circuit.program.unconstrained_functions.clone();
+        let (initial_input_map, _initial_expected_return) =
+            read_inputs_from_file(&args.prover_file, &circuit.abi)?;
+        let mut input_map_keys: Vec<_> = initial_input_map.keys().collect();
+        input_map_keys.sort();
 
         for i in 0..num_generation {
             print!("\r\x1b[2K🧬 Generation: {}/{}", i, num_generation);
+
+            // ------------ Generating random inputs ------------------------ //
+            let mut mutated_input_map = initial_input_map.clone();
+            let name = input_map_keys[rng.gen_range(0..input_map_keys.len())];
+            if let Some(InputValue::Field(_)) = mutated_input_map.get(name) {
+                mutated_input_map.insert(
+                    name.clone(),
+                    InputValue::Field(FieldElement::from(rng.random::<u64>())),
+                );
+            }
+
+            // ------------ Executing the original circuit ------------------ //
+            let original_result = match execute(&circuit, &args, &mutated_input_map, None) {
+                Ok(results) => results.return_values.actual_return,
+                Err(e) => {
+                    if let CliError::CircuitExecutionError(ref err) = e {
+                        execution::show_diagnostic(&circuit, err);
+                    }
+                    None
+                }
+            };
+            let original_unconstrained_functions = circuit.program.unconstrained_functions.clone();
+
+            // ------------ Mutating unconstrained functions ---------------- //
 
             let mut mutated_unconstrained_functions = original_unconstrained_functions.clone();
 
@@ -111,7 +177,9 @@ pub fn zkfuzz_run(
             }
             circuit.program.unconstrained_functions = mutated_unconstrained_functions;
 
-            let mutated_result = match execute(&circuit, &args) {
+            // ----------- Executing the mutated circuit -------------------- //
+
+            let mutated_result = match execute(&circuit, &args, &mutated_input_map, None) {
                 Ok(results) => results.return_values.actual_return,
                 Err(e) => {
                     if let CliError::CircuitExecutionError(ref err) = e {
@@ -149,7 +217,7 @@ struct AExecutorCli {
 
 pub fn start_cli() -> eyre::Result<()> {
     let AExecutorCli { command } = AExecutorCli::parse();
-    let mut rng = StdRng::seed_from_u64(42);
+    let mut rng = StdRng::seed_from_u64(12);
     zkfuzz_run(command, 1000, &mut rng);
 
     Ok(())

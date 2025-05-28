@@ -19,6 +19,9 @@ nargo_cli = { git = "https://github.com/noir-lang/noir.git", package = "nargo_cl
 nargo = { git = "https://github.com/noir-lang/noir.git", package = "nargo" }
 bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir.git", package = "bn254_blackbox_solver" }
 brillig = { git = "https://github.com/noir-lang/noir.git", package = "brillig" }
+acvm = { git = "https://github.com/noir-lang/noir.git", package = "acvm" }
+acir = { git = "https://github.com/noir-lang/noir.git", package = "acir" }
+noirc_abi = { git = "https://github.com/noir-lang/noir.git", package = "noirc_abi" }
 clap = { version = "4.3.19", features = ["derive", "env"] }
 color-eyre = "0.6.2"
 const_format = "0.2.30"
