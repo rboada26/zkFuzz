@@ -143,12 +143,14 @@ pub fn zkfuzz_run(
 
             // ------------ Generating random inputs ------------------------ //
             let mut mutated_input_map = initial_input_map.clone();
-            let name = input_map_keys[rng.gen_range(0..input_map_keys.len())];
-            if let Some(InputValue::Field(_)) = mutated_input_map.get(name) {
-                mutated_input_map.insert(
-                    name.clone(),
-                    InputValue::Field(FieldElement::from(rng.random::<u64>())),
-                );
+            //let name = input_map_keys[rng.gen_range(0..input_map_keys.len())];
+            for name in &input_map_keys {
+                if let Some(InputValue::Field(_)) = mutated_input_map.get(name.clone()) {
+                    mutated_input_map.insert(
+                        name.clone().clone(),
+                        InputValue::Field(FieldElement::from(rng.gen_range(0..16) as u32)),
+                    );
+                }
             }
 
             // ------------ Executing the original circuit ------------------ //
