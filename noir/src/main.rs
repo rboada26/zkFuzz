@@ -94,7 +94,7 @@ fn execute(
     }
     .build_with_base(transcript_executor);
 
-    let mut blackbox_solver = Bn254BlackBoxSolver(args.pedantic_solving);
+    let blackbox_solver = Bn254BlackBoxSolver(args.pedantic_solving);
 
     run_circuit_and_get_witnesses(
         circuit,
