@@ -13,8 +13,8 @@ use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 use acir::{native_types::WitnessStack, FieldElement};
 use acvm::BlackBoxFunctionSolver;
 use bn254_blackbox_solver::Bn254BlackBoxSolver;
-use brillig::BinaryFieldOp;
 use brillig::Opcode as BrilligOpcode;
+use brillig::{BinaryFieldOp, BinaryIntOp};
 use nargo::foreign_calls::{
     layers, transcript::ReplayForeignCallExecutor, DefaultForeignCallBuilder,
 };
@@ -186,6 +186,22 @@ pub fn zkfuzz_run(
                             op: BinaryFieldOp::Sub,
                             lhs: lhs.clone(),
                             rhs: lhs.clone(),
+                        };
+                }
+                BrilligOpcode::BinaryIntOp {
+                    destination,
+                    op: _,
+                    lhs,
+                    rhs: _,
+                    bit_size,
+                } => {
+                    mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
+                        BrilligOpcode::BinaryIntOp {
+                            destination,
+                            op: BinaryIntOp::Sub,
+                            lhs: lhs.clone(),
+                            rhs: lhs.clone(),
+                            bit_size,
                         };
                 }
                 _ => {}
