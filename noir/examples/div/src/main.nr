@@ -1,6 +1,6 @@
 unconstrained fn vuln_div(x: Field, y: Field) -> Field {
     if y == 0 {
-        let z = 0;
+        let z = 1;
         z
     } else {
         let z = x / y;

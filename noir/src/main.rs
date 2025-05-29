@@ -94,7 +94,7 @@ fn execute(
     }
     .build_with_base(transcript_executor);
 
-    let blackbox_solver = Bn254BlackBoxSolver(args.pedantic_solving);
+    let mut blackbox_solver = Bn254BlackBoxSolver(args.pedantic_solving);
 
     run_circuit_and_get_witnesses(
         circuit,
@@ -148,7 +148,7 @@ pub fn zkfuzz_run(
                 if let Some(InputValue::Field(_)) = mutated_input_map.get(name.clone()) {
                     mutated_input_map.insert(
                         name.clone().clone(),
-                        InputValue::Field(FieldElement::from(rng.gen_range(0..16) as u32)),
+                        InputValue::Field(FieldElement::from(rng.gen_range(0..2) as u32)),
                     );
                 }
             }
@@ -174,26 +174,38 @@ pub fn zkfuzz_run(
                 rng.gen_range(0..original_unconstrained_functions[func_idx].bytecode.len());
 
             match mutated_unconstrained_functions[func_idx].bytecode[instr_pos] {
+                BrilligOpcode::Mov {
+                    destination,
+                    source,
+                } => {
+                    mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
+                        BrilligOpcode::BinaryFieldOp {
+                            destination,
+                            op: BinaryFieldOp::Add,
+                            lhs: source.clone(),
+                            rhs: source.clone(),
+                        };
+                }
                 BrilligOpcode::BinaryFieldOp {
                     destination,
                     op: _,
                     lhs,
-                    rhs: _,
+                    rhs,
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
                         if rng.random::<bool>() {
                             BrilligOpcode::BinaryFieldOp {
                                 destination,
                                 op: BinaryFieldOp::Sub,
-                                lhs: lhs.clone(),
-                                rhs: lhs.clone(),
+                                lhs: rhs.clone(),
+                                rhs: rhs.clone(),
                             }
                         } else {
                             BrilligOpcode::BinaryFieldOp {
                                 destination,
                                 op: BinaryFieldOp::Div,
-                                lhs: lhs.clone(),
-                                rhs: lhs.clone(),
+                                lhs: rhs.clone(),
+                                rhs: rhs.clone(),
                             }
                         };
                 }
