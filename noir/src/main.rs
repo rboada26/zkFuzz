@@ -181,11 +181,20 @@ pub fn zkfuzz_run(
                     rhs: _,
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
-                        BrilligOpcode::BinaryFieldOp {
-                            destination,
-                            op: BinaryFieldOp::Sub,
-                            lhs: lhs.clone(),
-                            rhs: lhs.clone(),
+                        if rng.random::<bool>() {
+                            BrilligOpcode::BinaryFieldOp {
+                                destination,
+                                op: BinaryFieldOp::Sub,
+                                lhs: lhs.clone(),
+                                rhs: lhs.clone(),
+                            }
+                        } else {
+                            BrilligOpcode::BinaryFieldOp {
+                                destination,
+                                op: BinaryFieldOp::Div,
+                                lhs: lhs.clone(),
+                                rhs: lhs.clone(),
+                            }
                         };
                 }
                 BrilligOpcode::BinaryIntOp {
@@ -196,12 +205,22 @@ pub fn zkfuzz_run(
                     bit_size,
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
-                        BrilligOpcode::BinaryIntOp {
-                            destination,
-                            op: BinaryIntOp::Sub,
-                            lhs: lhs.clone(),
-                            rhs: lhs.clone(),
-                            bit_size,
+                        if rng.random::<bool>() {
+                            BrilligOpcode::BinaryIntOp {
+                                destination,
+                                op: BinaryIntOp::Sub,
+                                lhs: lhs.clone(),
+                                rhs: lhs.clone(),
+                                bit_size,
+                            }
+                        } else {
+                            BrilligOpcode::BinaryIntOp {
+                                destination,
+                                op: BinaryIntOp::Div,
+                                lhs: lhs.clone(),
+                                rhs: lhs.clone(),
+                                bit_size,
+                            }
                         };
                 }
                 _ => {}
