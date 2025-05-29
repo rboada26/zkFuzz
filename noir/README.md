@@ -15,5 +15,5 @@ cd examples
 nargo compile
 cd ..
 
-./target/release/zkfuzz-noir --artifact-path ./examples/target/iszero.json --prover-file ./examples/Prover.toml 2>/dev/null
+./target/release/zkfuzz-noir --artifact-path ./examples/iszero/target/iszero.json --prover-file ./examples/iszero/Prover.toml 2>/dev/null
 ```
