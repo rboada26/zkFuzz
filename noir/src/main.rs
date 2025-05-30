@@ -13,6 +13,7 @@ use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 use acir::{native_types::WitnessStack, FieldElement};
 use acvm::BlackBoxFunctionSolver;
 use bn254_blackbox_solver::Bn254BlackBoxSolver;
+use brillig::MemoryAddress;
 use brillig::Opcode as BrilligOpcode;
 use brillig::{BinaryFieldOp, BinaryIntOp};
 use nargo::foreign_calls::{
@@ -182,8 +183,8 @@ pub fn zkfuzz_run(
                         BrilligOpcode::BinaryFieldOp {
                             destination,
                             op: BinaryFieldOp::Add,
-                            lhs: source.clone(),
-                            rhs: source.clone(),
+                            lhs: source,
+                            rhs: MemoryAddress::Relative(usize::MAX),
                         };
                 }
                 BrilligOpcode::BinaryFieldOp {
@@ -243,8 +244,8 @@ pub fn zkfuzz_run(
             let raw_mutated_result = catch_unwind(AssertUnwindSafe(|| {
                 execute(&circuit, &args, &mutated_input_map, None)
             }));
-            let mutated_result = match raw_mutated_result {
-                Ok(Ok(results)) => results.return_values.actual_return,
+            let mutated_result = match &raw_mutated_result {
+                Ok(Ok(results)) => results.return_values.actual_return.clone(),
                 Ok(Err(e)) => {
                     if let CliError::CircuitExecutionError(ref err) = e {
                         execution::show_diagnostic(&circuit, err);
