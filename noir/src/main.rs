@@ -107,12 +107,12 @@ fn execute(
 }
 
 pub fn draw_random_constant<F>(destination: MemoryAddress, rng: &mut StdRng) -> BrilligOpcode<F> {
-    if rng.random::<f64>() < 0.2 {
+    if rng.random::<f64>() < 0.5 {
         BrilligOpcode::Mov {
             destination,
             source: MemoryAddress::Relative(usize::MAX),
         }
-    } else if rng.random::<f64>() < 0.4 {
+    } else if rng.random::<f64>() < 1.0 {
         BrilligOpcode::Mov {
             destination,
             source: MemoryAddress::Relative(usize::MAX - 1),
@@ -202,6 +202,7 @@ pub fn zkfuzz_run(
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
                         draw_random_constant(destination, rng);
                 }
+                /*
                 BrilligOpcode::BinaryFieldOp {
                     destination,
                     op: _,
@@ -220,7 +221,7 @@ pub fn zkfuzz_run(
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
                         draw_random_constant(destination, rng);
-                }
+                }*/
                 _ => {}
             }
             circuit.program.unconstrained_functions = mutated_unconstrained_functions;
@@ -233,7 +234,7 @@ pub fn zkfuzz_run(
                 Ok(Ok(results)) => results.return_values.actual_return.clone(),
                 Ok(Err(e)) => {
                     if let CliError::CircuitExecutionError(ref err) = e {
-                        execution::show_diagnostic(&circuit, err);
+                        //execution::show_diagnostic(&circuit, err);
                     }
                     None
                 }
@@ -272,7 +273,7 @@ struct AExecutorCli {
 
 pub fn start_cli() -> eyre::Result<()> {
     let AExecutorCli { command } = AExecutorCli::parse();
-    let mut rng = StdRng::seed_from_u64(42);
+    let mut rng = StdRng::seed_from_u64(41);
     zkfuzz_run(command, 1000, &mut rng);
 
     Ok(())
