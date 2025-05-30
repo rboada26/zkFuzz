@@ -106,6 +106,25 @@ fn execute(
     )
 }
 
+pub fn draw_random_constant<F>(destination: MemoryAddress, rng: &mut StdRng) -> BrilligOpcode<F> {
+    if rng.random::<f64>() < 0.2 {
+        BrilligOpcode::Mov {
+            destination,
+            source: MemoryAddress::Relative(usize::MAX),
+        }
+    } else if rng.random::<f64>() < 0.4 {
+        BrilligOpcode::Mov {
+            destination,
+            source: MemoryAddress::Relative(usize::MAX - 1),
+        }
+    } else {
+        BrilligOpcode::Mov {
+            destination,
+            source: MemoryAddress::Relative(usize::MAX - 2),
+        }
+    }
+}
+
 /// Fuzzes a Noir program by mutating inputs and unconstrained functions, detecting under-constrained bugs.
 ///
 /// Compares return values between original and mutated programs to identify behavioral divergence.
@@ -180,12 +199,7 @@ pub fn zkfuzz_run(
                     source,
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
-                        BrilligOpcode::BinaryFieldOp {
-                            destination,
-                            op: BinaryFieldOp::Add,
-                            lhs: source,
-                            rhs: MemoryAddress::Relative(usize::MAX),
-                        };
+                        draw_random_constant(destination, rng);
                 }
                 BrilligOpcode::BinaryFieldOp {
                     destination,
@@ -194,21 +208,7 @@ pub fn zkfuzz_run(
                     rhs,
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
-                        if rng.random::<bool>() {
-                            BrilligOpcode::BinaryFieldOp {
-                                destination,
-                                op: BinaryFieldOp::Sub,
-                                lhs: rhs.clone(),
-                                rhs: rhs.clone(),
-                            }
-                        } else {
-                            BrilligOpcode::BinaryFieldOp {
-                                destination,
-                                op: BinaryFieldOp::Div,
-                                lhs: rhs.clone(),
-                                rhs: rhs.clone(),
-                            }
-                        };
+                        draw_random_constant(destination, rng);
                 }
                 BrilligOpcode::BinaryIntOp {
                     destination,
@@ -218,23 +218,7 @@ pub fn zkfuzz_run(
                     bit_size,
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
-                        if rng.random::<bool>() {
-                            BrilligOpcode::BinaryIntOp {
-                                destination,
-                                op: BinaryIntOp::Sub,
-                                lhs: lhs.clone(),
-                                rhs: lhs.clone(),
-                                bit_size,
-                            }
-                        } else {
-                            BrilligOpcode::BinaryIntOp {
-                                destination,
-                                op: BinaryIntOp::Div,
-                                lhs: lhs.clone(),
-                                rhs: lhs.clone(),
-                                bit_size,
-                            }
-                        };
+                        draw_random_constant(destination, rng);
                 }
                 _ => {}
             }
