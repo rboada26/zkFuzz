@@ -2,10 +2,13 @@ use std::io;
 use std::io::Write;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
+use std::path::PathBuf;
 
+use clap::Args;
 use clap::{command, Parser};
 use color_eyre::eyre;
 use const_format::formatcp;
+use eyre::eyre;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
@@ -20,8 +23,6 @@ use nargo::foreign_calls::{
     layers, transcript::ReplayForeignCallExecutor, DefaultForeignCallBuilder,
 };
 use nargo::{foreign_calls::ForeignCallExecutor, NargoError};
-use noir_artifact_cli::commands::execute_cmd;
-use noir_artifact_cli::commands::execute_cmd::ExecuteCommand;
 use noir_artifact_cli::execution;
 use noir_artifact_cli::execution::{ExecutionResults, ReturnValues};
 use noir_artifact_cli::fs::{inputs::read_inputs_from_file, witness::save_witness_to_dir};
@@ -106,23 +107,21 @@ fn execute(
     )
 }
 
-pub fn draw_random_constant<F>(destination: MemoryAddress, rng: &mut StdRng) -> BrilligOpcode<F> {
-    if rng.random::<f64>() < 0.5 {
-        BrilligOpcode::Mov {
+pub fn draw_random_constant<F>(
+    destination: MemoryAddress,
+    source: MemoryAddress,
+    rng: &mut StdRng,
+) -> BrilligOpcode<F> {
+    std::env::set_var("ZKFUZZ_NOIR_SEED", format!("{}", rng.random::<u64>()));
+    match source {
+        MemoryAddress::Direct(address) => BrilligOpcode::Mov {
             destination,
-            source: MemoryAddress::Relative(usize::MAX),
-        }
-    } else if rng.random::<f64>() < 1.0 {
-        BrilligOpcode::Mov {
+            source: MemoryAddress::Direct(usize::MAX - address),
+        },
+        MemoryAddress::Relative(offset) => BrilligOpcode::Mov {
             destination,
-            source: MemoryAddress::Relative(usize::MAX - 1),
-        }
-    } else {
-        std::env::set_var("ZKFUZZ_NOIR_SEED", format!("{}", rng.random::<u64>()));
-        BrilligOpcode::Mov {
-            destination,
-            source: MemoryAddress::Relative(usize::MAX - 2),
-        }
+            source: MemoryAddress::Relative(usize::MAX - offset),
+        },
     }
 }
 
@@ -200,7 +199,7 @@ pub fn zkfuzz_run(
                     source,
                 } => {
                     mutated_unconstrained_functions[func_idx].bytecode[instr_pos] =
-                        draw_random_constant(destination, rng);
+                        draw_random_constant(destination, source, rng);
                 }
                 /*
                 BrilligOpcode::BinaryFieldOp {
@@ -234,7 +233,7 @@ pub fn zkfuzz_run(
                 Ok(Ok(results)) => results.return_values.actual_return.clone(),
                 Ok(Err(e)) => {
                     if let CliError::CircuitExecutionError(ref err) = e {
-                        //execution::show_diagnostic(&circuit, err);
+                        execution::show_diagnostic(&circuit, err);
                     }
                     None
                 }
@@ -264,16 +263,90 @@ pub fn zkfuzz_run(
     Ok(())
 }
 
+fn parse_and_normalize_path(path: &str) -> eyre::Result<PathBuf> {
+    use fm::NormalizePath;
+    let mut path: PathBuf = path
+        .parse()
+        .map_err(|e| eyre!("failed to parse path: {e}"))?;
+    if !path.is_absolute() {
+        path = std::env::current_dir().unwrap().join(path).normalize();
+    }
+    Ok(path)
+}
+
+/// Execute a binary program or a circuit artifact.
+#[derive(Debug, Clone, Args)]
+pub struct ExecuteCommand {
+    /// Path to the JSON build artifact (either a program or a contract).
+    #[clap(long, short, value_parser = parse_and_normalize_path)]
+    pub artifact_path: PathBuf,
+
+    /// Path to the Prover.toml file which contains the inputs and the
+    /// optional return value in ABI format.
+    #[clap(long, short, value_parser = parse_and_normalize_path)]
+    pub prover_file: PathBuf,
+
+    /// Seed
+    #[clap(long, short)]
+    pub seed: Option<usize>,
+
+    /// Path to the directory where the output witness should be saved.
+    /// If empty then the results are discarded.
+    #[clap(long, short, value_parser = parse_and_normalize_path)]
+    pub output_dir: Option<PathBuf>,
+
+    /// Write the execution witness to named file
+    ///
+    /// Defaults to the name of the circuit being executed.
+    #[clap(long, short)]
+    pub witness_name: Option<String>,
+
+    /// Name of the function to execute, if the artifact is a contract.
+    #[clap(long)]
+    pub contract_fn: Option<String>,
+
+    /// Path to the oracle transcript that is to be replayed during the
+    /// execution in response to foreign calls. The format is expected
+    /// to be JSON Lines, with each request/response on a separate line.
+    ///
+    /// Note that a transcript might be invalid if the inputs change and
+    /// the circuit takes a different path during execution.
+    #[clap(long, conflicts_with = "oracle_resolver")]
+    pub oracle_file: Option<PathBuf>,
+
+    /// JSON RPC url to solve oracle calls.
+    #[clap(long, conflicts_with = "oracle_file")]
+    pub oracle_resolver: Option<String>,
+
+    /// Root directory for the RPC oracle resolver.
+    #[clap(long, value_parser = parse_and_normalize_path)]
+    pub oracle_root_dir: Option<PathBuf>,
+
+    /// Package name for the RPC oracle resolver
+    #[clap(long)]
+    pub oracle_package_name: Option<String>,
+
+    /// Use pedantic ACVM solving, i.e. double-check some black-box function assumptions when solving.
+    #[clap(long, default_value_t = false)]
+    pub pedantic_solving: bool,
+}
+
 #[derive(Parser, Debug)]
 #[command(name="noir-execute", author, version=VERSION_STRING, about, long_about = None)]
 struct AExecutorCli {
     #[command(flatten)]
-    command: execute_cmd::ExecuteCommand,
+    command: ExecuteCommand,
 }
 
 pub fn start_cli() -> eyre::Result<()> {
     let AExecutorCli { command } = AExecutorCli::parse();
-    let mut rng = StdRng::seed_from_u64(41);
+    let mut rng = StdRng::seed_from_u64(
+        command
+            .seed
+            .unwrap_or_default()
+            .try_into()
+            .unwrap_or_default(),
+    );
     zkfuzz_run(command, 1000, &mut rng);
 
     Ok(())
