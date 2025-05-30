@@ -118,6 +118,7 @@ pub fn draw_random_constant<F>(destination: MemoryAddress, rng: &mut StdRng) -> 
             source: MemoryAddress::Relative(usize::MAX - 1),
         }
     } else {
+        std::env::set_var("ZKFUZZ_NOIR_SEED", format!("{}", rng.random::<u64>()));
         BrilligOpcode::Mov {
             destination,
             source: MemoryAddress::Relative(usize::MAX - 2),
@@ -271,7 +272,7 @@ struct AExecutorCli {
 
 pub fn start_cli() -> eyre::Result<()> {
     let AExecutorCli { command } = AExecutorCli::parse();
-    let mut rng = StdRng::seed_from_u64(12);
+    let mut rng = StdRng::seed_from_u64(42);
     zkfuzz_run(command, 1000, &mut rng);
 
     Ok(())
