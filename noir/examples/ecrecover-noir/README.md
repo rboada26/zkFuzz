@@ -4,7 +4,7 @@ This repository demonstrates a vulnerability in the `to_eth_address` function of
 
 🔍 Original nug report: https://gist.github.com/olehmisar/4cfe6128eaac2bfbe1fa8eb46f0116d6.
 
-- Reproduce
+To reproduce the vulnerability using `zkfuzz-noir`, run the following:
 
 ```bash
 nargo compile --skip-brillig-constraints-check
