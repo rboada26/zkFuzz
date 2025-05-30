@@ -1,8 +1,8 @@
-# Under-Constrained Bug in `to_eth_address` (ecrecover-noir)
+# Under-Constrained Vulnerability in `to_eth_address` (ecrecover-noir)
 
 This repository demonstrates a vulnerability in the `to_eth_address` function of the `ecrecover-noir` project. The issue results in under-constrained behavior, meaning that the circuit may accept incorrect witnesses as valid proofs.
 
-🔍 Original nug report: https://gist.github.com/olehmisar/4cfe6128eaac2bfbe1fa8eb46f0116d6.
+🔍 Original bug report: https://gist.github.com/olehmisar/4cfe6128eaac2bfbe1fa8eb46f0116d6.
 
 To reproduce the vulnerability using `zkfuzz-noir`, run the following:
 
